@@ -1,0 +1,640 @@
+#!/usr/bin/env python3
+"""Phoenix CLI — prepare, encrypt and upload packages; set up and manage the server.
+
+Files are encrypted on this PC with the server's public key; plaintext never leaves your machine.
+With the vault enabled, packages on this PC are also kept encrypted (gocryptfs) when you're not editing them.
+"""
+
+import argparse
+import contextlib
+import getpass
+import hashlib
+import json
+import os
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+import tempfile
+import tomllib
+from datetime import datetime
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "server"))
+from phoenix import durations  # noqa: E402  (stdlib-only module shared with the server)
+
+CONFIG_PATH = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "phoenix" / "config.json"
+STAGING = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "phoenix" / "staging"
+VAULT = ROOT / "vault"
+
+RECIPIENT_FILE = "recipient.toml"
+ACCOUNT_TOML = "_account.toml"
+ACCOUNT_BLOB = "_account.json.age"
+TEXT_SUFFIXES = {".txt", ".md"}
+VOICE_SUFFIXES = {".ogg", ".oga", ".opus"}
+ROUND_SUFFIX = ".round.mp4"
+TRIGGERS = ("silence", "panic")
+TG_FILE_LIMIT = 2000 * 1024 * 1024  # Telegram limit for non-Premium accounts
+HORIZON = 364 * 86400  # Telegram keeps scheduled messages for up to a year
+TEMPLATE_MARK = "PHOENIX-TEMPLATE"
+
+RECIPIENT_TEMPLATE = """\
+# Who receives this package.
+name = "{name}"
+
+# Telegram: "@username", "+380XXXXXXXXX" (must be in your contacts) or a numeric user id.
+telegram = "@username"
+
+# --- Optional -------------------------------------------------------------------
+# When to send: "silence" (you stopped checking in) and/or "panic" (panic button).
+# on = ["silence", "panic"]
+
+# Wait this long after the trigger before sending anything (30m, 12h, 3d, 2w, 1y).
+# delay = "3d"
+
+# If {name} hasn't read the package after `backup_after`, send it to someone else.
+# backup = "@someone_else"
+# backup_after = "7d"
+# backup_note = "This was meant for ..., but they could not be reached."
+"""
+
+LETTER_TEMPLATE = f"""\
+{TEMPLATE_MARK} — delete this line, otherwise `phoenix push` refuses to upload.
+
+Write your message here.
+
+How files in this folder are sent (alphabetical order by path):
+  *.txt, *.md          → text messages
+  *.ogg / *.opus       → voice messages
+  *.round.mp4          → round video messages (square video, up to 60 s)
+  anything else        → files, original quality
+Folders named like "@+1y" or "@2034-05-12" hold items sent later:
+  @+1y                 → 1 year after this package starts
+  @2034-05-12          → on that date at 09:00 (@2034-05-12T18:30 for a specific time)
+"""
+
+ACCOUNT_TEMPLATE = f"""\
+# {TEMPLATE_MARK} — delete this line when you're done.
+# What Phoenix does with your Telegram account after it is triggered.
+
+# Which triggers run these actions: "silence" and/or "panic".
+on = ["silence"]
+
+# Sent once to each person who messages you in a private chat (not to your recipients).
+autoreply = \"\"\"
+This is an automatic message. I can no longer answer here.
+\"\"\"
+
+# Your new profile bio (up to 70 characters; restored if you /abort).
+# about = "..."
+
+# Messages to groups, channels or people. Repeat the block for more.
+# [[post]]
+# chat = "@some_group"
+# text = "..."
+# delay = "1d"
+"""
+
+
+def die(msg: str) -> None:
+    print(f"error: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def need(*tools: str) -> None:
+    for tool in tools:
+        if not shutil.which(tool):
+            die(f"'{tool}' is not installed (Arch: sudo pacman -S {tool})")
+
+
+def load_config() -> dict:
+    if not CONFIG_PATH.exists():
+        die("not initialized yet, run: phoenix init --server root@SERVER_IP")
+    return json.loads(CONFIG_PATH.read_text())
+
+
+def save_config(cfg: dict) -> None:
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    CONFIG_PATH.write_text(json.dumps(cfg, indent=2))
+    CONFIG_PATH.chmod(0o600)
+
+
+def ssh(cfg: dict, command: str, *, tty: bool = False, capture: bool = False, input: str | None = None):
+    remote = f"cd {shlex.quote(cfg['remote_dir'])} && {command}"
+    args = ["ssh", *(["-t"] if tty else []), cfg["server"], remote]
+    return subprocess.run(args, text=True, capture_output=capture, input=input)
+
+
+def sh(*args: str) -> None:
+    if subprocess.run(args).returncode:
+        die(f"command failed: {' '.join(args)}")
+
+
+def h16(text: str) -> str:
+    return hashlib.sha256(text.encode()).hexdigest()[:16]
+
+
+def human(n: float) -> str:
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024 or unit == "GB":
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1024
+
+
+def ask_yes(question: str, default: bool = True) -> bool:
+    answer = input(f"{question} [{'Y/n' if default else 'y/N'}] ").strip().lower()
+    return default if not answer else answer.startswith("y")
+
+
+# ---------------------------------------------------------------------------- vault
+def vault_enabled() -> bool:
+    return (VAULT / "gocryptfs.conf").exists()
+
+
+def mountpoint() -> Path:
+    return Path(os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir()) / "phoenix-packages"
+
+
+def unmount(mp: Path) -> bool:
+    tool = shutil.which("fusermount3") or shutil.which("fusermount") or "fusermount3"
+    if subprocess.run([tool, "-u", str(mp)]).returncode:
+        print(f"⚠️ Could not lock the vault: close every window/terminal using {mp}, then run: phoenix lock")
+        return False
+    mp.rmdir()
+    return True
+
+
+@contextlib.contextmanager
+def packages_root(cfg: dict):
+    """Yields the folder with plaintext packages; unlocks (and re-locks) the vault if it's enabled."""
+    if not vault_enabled():
+        yield Path(cfg["packages_dir"])
+        return
+    need("gocryptfs")
+    mp = mountpoint()
+    if os.path.ismount(mp):  # already unlocked by another `phoenix edit`
+        yield mp
+        return
+    mp.mkdir(mode=0o700, exist_ok=True)
+    print("🔐 Vault password:")
+    if subprocess.run(["gocryptfs", "-q", str(VAULT), str(mp)]).returncode:
+        mp.rmdir()
+        die("could not unlock the vault (wrong password?)")
+    try:
+        yield mp
+    finally:
+        unmount(mp)
+
+
+def cmd_vault_init(a) -> None:
+    need("gocryptfs")
+    cfg = load_config()
+    if vault_enabled():
+        die(f"the vault already exists: {VAULT}")
+    plain = Path(cfg["packages_dir"])
+    VAULT.mkdir(parents=True, exist_ok=True)
+    print("Choose a vault password. You'll type it every time you edit or push packages.")
+    print("gocryptfs then prints a MASTER KEY: write it down on paper — it's the only way back if you forget the password.\n")
+    if subprocess.run(["gocryptfs", "-init", str(VAULT)]).returncode:
+        shutil.rmtree(VAULT, ignore_errors=True)
+        die("gocryptfs -init failed")
+    if plain.exists() and any(plain.iterdir()):
+        with packages_root(cfg) as mp:
+            print(f"Moving {plain} into the vault…")
+            shutil.copytree(plain, mp, dirs_exist_ok=True)
+        if ask_yes(f"Delete the unencrypted folder {plain} now?"):
+            shutil.rmtree(plain)
+            print("Deleted. (On an SSD, traces may remain on disk until it's overwritten.)")
+    print(f"✅ Vault ready: {VAULT}\nBack up this folder anywhere (USB, cloud) — it's useless without the password.")
+
+
+def cmd_edit(a) -> None:
+    cfg = load_config()
+    with packages_root(cfg) as root:
+        root.mkdir(parents=True, exist_ok=True)
+        print(f"📂 Your packages: {root}")
+        subprocess.Popen(["xdg-open", str(root)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        print("Edit them (new recipient: `phoenix new <name>` in another terminal), then come back here.")
+        input("Press Enter when you're done… ")
+        if ask_yes("Upload the changes to the server now?"):
+            push_from(cfg, root)
+    if vault_enabled():
+        print("🔒 Vault locked.")
+
+
+def cmd_lock(a) -> None:
+    mp = mountpoint()
+    if not os.path.ismount(mp):
+        print("The vault is not unlocked.")
+    elif unmount(mp):
+        print("🔒 Vault locked.")
+
+
+# --------------------------------------------------------------------- server setup
+def cmd_init(a) -> None:
+    need("ssh", "rsync")
+    cfg = json.loads(CONFIG_PATH.read_text()) if CONFIG_PATH.exists() else {}
+    cfg.update(server=a.server, remote_dir=a.remote_dir, packages_dir=str(Path(a.packages).expanduser().resolve()))
+    cfg.pop("public_key", None)
+    if subprocess.run(["ssh", cfg["server"], "true"]).returncode:
+        die(f"cannot connect to {cfg['server']} over SSH")
+    save_config(cfg)
+    if not vault_enabled():
+        Path(cfg["packages_dir"]).mkdir(parents=True, exist_ok=True)
+    print(f"Saved {CONFIG_PATH}\nNext: phoenix bootstrap")
+
+
+def cmd_bootstrap(a) -> None:
+    cfg = load_config()
+    script = (ROOT / "deploy" / "bootstrap.sh").read_text()
+    r = subprocess.run(["ssh", cfg["server"], "bash", "-s", "--", cfg["remote_dir"]], input=script, text=True)
+    if r.returncode:
+        die("bootstrap failed (see output above)")
+    print("Next: phoenix deploy")
+
+
+def cmd_deploy(a) -> None:
+    need("rsync")
+    cfg = load_config()
+    dest = f"{cfg['server']}:{cfg['remote_dir']}/"
+    sh("rsync", "-a", "--delete", "--exclude", "__pycache__", str(ROOT / "server"), dest)
+    sh("rsync", "-a", str(ROOT / "docker-compose.yml"), dest)
+    if ssh(cfg, "docker compose build -q").returncode:
+        die("docker build failed")
+    fetch_public_key(cfg)
+    if ssh(cfg, "test -s .env").returncode:
+        print("Code deployed. Next: phoenix configure")
+        return
+    if ssh(cfg, "docker compose up -d").returncode:
+        die("docker compose up failed")
+    print("✅ Deployed and running.")
+
+
+def fetch_public_key(cfg: dict) -> str:
+    r = ssh(cfg, "docker compose run --rm -T phoenix python -m phoenix.keygen", capture=True)
+    keys = [line.strip() for line in r.stdout.splitlines() if line.strip().startswith("age1")]
+    if r.returncode or not keys:
+        die(f"cannot get the server key:\n{r.stderr}")
+    if cfg.get("public_key") != keys[-1]:
+        cfg["public_key"] = keys[-1]
+        save_config(cfg)
+        print("Server encryption key saved.")
+    return keys[-1]
+
+
+def cmd_configure(a) -> None:
+    cfg = load_config()
+    print("Values are stored only on the server, in .env (readable by root only).")
+    values = {
+        "BOT_TOKEN": getpass.getpass("Bot token from @BotFather (hidden): ").strip(),
+        "OWNER_ID": input("Your Telegram user id (from @userinfobot): ").strip(),
+        "API_ID": input("api_id from my.telegram.org: ").strip(),
+        "API_HASH": getpass.getpass("api_hash from my.telegram.org (hidden): ").strip(),
+        "TIMEZONE": input("Your time zone for dated letters [Europe/Kyiv]: ").strip() or "Europe/Kyiv",
+        "HEARTBEAT_URL": input("Heartbeat URL from healthchecks.io (optional, Enter to skip): ").strip(),
+    }
+    for key in ("OWNER_ID", "API_ID"):
+        if not values[key].isdigit():
+            die(f"{key} must be a number")
+    content = "".join(f"{k}={v}\n" for k, v in values.items())
+    if ssh(cfg, "umask 077 && cat > .env", input=content).returncode:
+        die("cannot write .env on the server")
+    print("Saved. Next: phoenix login")
+
+
+def cmd_login(a) -> None:
+    cfg = load_config()
+    ssh(
+        cfg,
+        "docker compose stop && docker compose run --rm phoenix python -m phoenix.login; docker compose up -d",
+        tty=True,
+    )
+    print("Open your bot in Telegram and press Start — it will confirm that Phoenix is armed.")
+
+
+def cmd_status(a) -> None:
+    ssh(load_config(), "docker compose exec -T phoenix python -m phoenix.ctl status")
+
+
+def cmd_log(a) -> None:
+    ssh(load_config(), "docker compose exec -T phoenix python -m phoenix.ctl log")
+
+
+def cmd_logs(a) -> None:
+    ssh(load_config(), "docker compose logs --tail 200 -f", tty=True)
+
+
+# ------------------------------------------------------------------------- packages
+def pause_before_lock() -> None:
+    """When a command unlocked the vault itself, give the user time to edit before it locks again."""
+    if vault_enabled():
+        input("Edit the files now, then press Enter to lock the vault… ")
+
+
+def cmd_new(a) -> None:
+    cfg = load_config()
+    already_open = os.path.ismount(mountpoint())
+    with packages_root(cfg) as root:
+        d = root / a.id
+        if d.exists():
+            die(f"{d} already exists")
+        d.mkdir(parents=True)
+        (d / RECIPIENT_FILE).write_text(RECIPIENT_TEMPLATE.format(name=a.id))
+        (d / "01-letter.txt").write_text(LETTER_TEMPLATE)
+        print(f"Created {d}\nEdit {RECIPIENT_FILE} and 01-letter.txt, add files, then: phoenix push")
+        if not already_open:
+            pause_before_lock()
+
+
+def cmd_account(a) -> None:
+    cfg = load_config()
+    already_open = os.path.ismount(mountpoint())
+    with packages_root(cfg) as root:
+        f = root / ACCOUNT_TOML
+        if f.exists():
+            die(f"{f} already exists")
+        root.mkdir(parents=True, exist_ok=True)
+        f.write_text(ACCOUNT_TEMPLATE)
+        print(f"Created {f}\nEdit it, then: phoenix push")
+        if not already_open:
+            pause_before_lock()
+
+
+def parse_duration(value, where: str, problems: list[str]) -> int:
+    if value is None:
+        return 0
+    try:
+        return durations.parse(str(value))
+    except ValueError as e:
+        problems.append(f"{where}: {e}")
+        return 0
+
+
+def parse_on(value, where: str, problems: list[str], default) -> list[str]:
+    on = value if value is not None else list(default)
+    if not isinstance(on, list) or not on or any(t not in TRIGGERS for t in on):
+        problems.append(f"{where}: 'on' must be a list with \"silence\" and/or \"panic\"")
+        return list(default)
+    return on
+
+
+def item_schedule(rel: str, problems: list[str], where: str) -> dict:
+    """The deepest folder named @+<duration> or @<date> decides when an item is sent."""
+    for part in reversed(rel.split("/")[:-1]):
+        if not part.startswith("@"):
+            continue
+        spec = part[1:]
+        if spec.startswith("+"):
+            return {"after": parse_duration(spec[1:], where, problems)}
+        try:
+            when = datetime.fromisoformat(spec)
+        except ValueError:
+            problems.append(f"{where}: folder '{part}' must look like @+1y or @2034-05-12 or @2034-05-12T18:30")
+            return {}
+        if "T" not in spec:
+            when = when.replace(hour=9)
+        return {"date": when.isoformat(timespec="minutes")}
+    return {}
+
+
+def item_kind(p: Path) -> str:
+    name = p.name.lower()
+    if name.endswith(ROUND_SUFFIX):
+        return "round"
+    if p.suffix.lower() in VOICE_SUFFIXES:
+        return "voice"
+    return "text" if p.suffix.lower() in TEXT_SUFFIXES else "file"
+
+
+def read_package(d: Path) -> tuple[dict, list[dict], list[str]]:
+    problems = []
+    try:
+        meta = tomllib.loads((d / RECIPIENT_FILE).read_text())
+    except FileNotFoundError:
+        return {}, [], [f"{d.name}: missing {RECIPIENT_FILE}"]
+    except tomllib.TOMLDecodeError as e:
+        return {}, [], [f"{d.name}/{RECIPIENT_FILE}: {e}"]
+    where = f"{d.name}/{RECIPIENT_FILE}"
+    for key in ("name", "telegram"):
+        if not isinstance(meta.get(key), str) or not meta[key].strip():
+            problems.append(f"{where}: '{key}' is required")
+    if meta.get("telegram") == "@username":
+        problems.append(f"{where}: set the real telegram username")
+    if meta.get("backup") == "@someone_else":
+        problems.append(f"{where}: set the real backup username")
+    manifest = {
+        "name": str(meta.get("name", "")).strip(),
+        "telegram": str(meta.get("telegram", "")).strip(),
+        "on": parse_on(meta.get("on"), where, problems, TRIGGERS),
+        "delay": parse_duration(meta.get("delay"), where, problems),
+    }
+    if meta.get("backup"):
+        manifest["backup"] = str(meta["backup"]).strip()
+        manifest["backup_after"] = parse_duration(meta.get("backup_after", "7d"), where, problems)
+        if meta.get("backup_note"):
+            manifest["backup_note"] = str(meta["backup_note"])
+
+    files = sorted(
+        (
+            p for p in d.rglob("*")
+            if p.is_file()
+            and p.name != RECIPIENT_FILE
+            and not any(part.startswith(".") for part in p.relative_to(d).parts)
+        ),
+        key=lambda p: p.relative_to(d).as_posix(),
+    )
+    if not files:
+        problems.append(f"{d.name}: package is empty")
+    items = []
+    for p in files:
+        rel = p.relative_to(d).as_posix()
+        kind = item_kind(p)
+        if kind == "text":
+            try:
+                text = p.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                problems.append(f"{d.name}/{rel}: not UTF-8 text")
+                continue
+            if TEMPLATE_MARK in text:
+                problems.append(f"{d.name}/{rel}: still contains the template line")
+        elif p.stat().st_size > TG_FILE_LIMIT:
+            problems.append(f"{d.name}/{rel}: {human(p.stat().st_size)} is over Telegram's 2 GB limit, split it")
+        items.append({"path": p, "rel": rel, "kind": kind, **item_schedule(rel, problems, f"{d.name}/{rel}")})
+    return manifest, items, problems
+
+
+def read_account(f: Path) -> tuple[dict | None, list[str]]:
+    if not f.exists():
+        return None, []
+    problems, where = [], f.name
+    text = f.read_text()
+    if TEMPLATE_MARK in text:
+        return None, [f"{where}: still contains the template line"]
+    try:
+        meta = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as e:
+        return None, [f"{where}: {e}"]
+    out = {"on": parse_on(meta.get("on"), where, problems, ("silence",))}
+    if meta.get("autoreply", "").strip():
+        out["autoreply"] = meta["autoreply"].strip()
+    if "about" in meta:
+        out["about"] = str(meta["about"])
+        if len(out["about"]) > 140:
+            problems.append(f"{where}: 'about' is too long (Telegram allows 70 characters, 140 with Premium)")
+    out["posts"] = []
+    for n, post in enumerate(meta.get("post", []), 1):
+        if not post.get("chat") or not str(post.get("text", "")).strip():
+            problems.append(f"{where}: post #{n} needs 'chat' and 'text'")
+            continue
+        out["posts"].append({
+            "chat": str(post["chat"]).strip(), "text": str(post["text"]).strip(),
+            "delay": parse_duration(post.get("delay"), f"{where} post #{n}", problems),
+        })
+    return out, problems
+
+
+def latest_offset(manifest: dict, items: list[dict]) -> float:
+    now = datetime.now()
+    offsets = [manifest["delay"] + i.get("after", 0) for i in items]
+    offsets += [(datetime.fromisoformat(i["date"]) - now).total_seconds() for i in items if i.get("date")]
+    return max(offsets, default=0)
+
+
+def age_encrypt(public_key: str, dst: Path, *, src: Path | None = None, data: bytes | None = None) -> None:
+    part = dst.with_name(dst.name + ".part")
+    args = ["age", "-r", public_key, "-o", str(part)] + ([str(src)] if src else [])
+    r = subprocess.run(args, input=data, capture_output=True)
+    if r.returncode:
+        die(f"age failed on {src or dst.name}: {r.stderr.decode().strip()}")
+    part.replace(dst)
+
+
+def cmd_push(a) -> None:
+    cfg = load_config()
+    with packages_root(cfg) as root:
+        push_from(cfg, root)
+
+
+def push_from(cfg: dict, packages_dir: Path) -> None:
+    need("age", "rsync")
+    public_key = cfg.get("public_key") or fetch_public_key(cfg)
+    dirs = sorted(p for p in packages_dir.iterdir() if p.is_dir() and not p.name.startswith((".", "_")))
+    if not dirs:
+        die(f"no packages in {packages_dir} (create one: phoenix new <name>)")
+
+    loaded, problems = [], []
+    for d in dirs:
+        manifest, items, issues = read_package(d)
+        problems += issues
+        loaded.append((d, manifest, items))
+    account, issues = read_account(packages_dir / ACCOUNT_TOML)
+    problems += issues
+    if problems:
+        die("fix these first:\n  " + "\n  ".join(problems))
+
+    STAGING.mkdir(parents=True, exist_ok=True)
+    cache_path = STAGING.parent / "cache.json"
+    cache = json.loads(cache_path.read_text()) if cache_path.exists() else {}
+    new_cache, keep = {}, set()
+
+    for d, manifest, items in loaded:
+        hid = h16("package:" + d.name)
+        out = STAGING / hid
+        out.mkdir(exist_ok=True)
+        keep.add(hid)
+        entries, keep_blobs = [], {"manifest.json.age"}
+        for item in items:
+            key = f"{d.name}/{item['rel']}"
+            iid = h16(key)
+            blob = f"{iid}.age"
+            st = item["path"].stat()
+            stamp = [st.st_size, st.st_mtime_ns, public_key]
+            if cache.get(key) != stamp or not (out / blob).exists():
+                print(f"  encrypting {key} ({human(st.st_size)})")
+                age_encrypt(public_key, out / blob, src=item["path"])
+            new_cache[key] = stamp
+            keep_blobs.add(blob)
+            entry = {"id": iid, "kind": item["kind"], "name": item["path"].name, "blob": blob, "size": st.st_size}
+            entry.update({k: item[k] for k in ("after", "date") if k in item})
+            entries.append(entry)
+        age_encrypt(public_key, out / "manifest.json.age", data=json.dumps({**manifest, "items": entries}).encode())
+        for stale in out.iterdir():
+            if stale.name not in keep_blobs:
+                stale.unlink()
+
+        total = sum(e["size"] for e in entries)
+        extras = []
+        if tuple(manifest["on"]) != TRIGGERS:
+            extras.append(f"only on {manifest['on'][0]}")
+        if manifest["delay"]:
+            extras.append(f"starts {durations.fmt(manifest['delay'])} after trigger")
+        later = sum(1 for i in items if "after" in i or "date" in i)
+        if later:
+            extras.append(f"{later} scheduled later")
+        if manifest.get("backup"):
+            extras.append(f"backup {manifest['backup']}")
+        print(f"✔ {manifest['name']} → {manifest['telegram']}: {len(entries)} item(s), {human(total)}"
+              + (f" ({', '.join(extras)})" if extras else ""))
+        latest = latest_offset(manifest, items)
+        if latest > HORIZON:
+            print(f"  ⚠️ last item is {durations.fmt(latest)} after trigger: the server must stay alive and paid "
+                  f"for {durations.fmt(latest - HORIZON)} after the trigger to hand it to Telegram.")
+
+    account_blob = STAGING / ACCOUNT_BLOB
+    if account:
+        age_encrypt(public_key, account_blob, data=json.dumps(account).encode())
+        keep.add(ACCOUNT_BLOB)
+        parts = [n for n in ("autoreply", "about") if n in account] + [f"{len(account['posts'])} post(s)"]
+        print(f"✔ account actions on {', '.join(account['on'])}: {', '.join(parts)}")
+
+    for stale in STAGING.iterdir():
+        if stale.name not in keep:
+            shutil.rmtree(stale) if stale.is_dir() else stale.unlink()
+    cache_path.write_text(json.dumps(new_cache))
+
+    print("Uploading…")
+    sh(
+        "rsync", "-a", "--delete", "--mkpath", "--info=progress2",
+        f"{STAGING}/", f"{cfg['server']}:{cfg['remote_dir']}/data/packages/",
+    )
+    print("✅ Uploaded. Your bot will confirm the recipients within a minute — then try /test.")
+
+
+def main() -> None:
+    p = argparse.ArgumentParser(prog="phoenix", description=__doc__.splitlines()[0])
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    s = sub.add_parser("init", help="connect to your server")
+    s.add_argument("--server", required=True, help="SSH target, e.g. root@1.2.3.4")
+    s.add_argument("--remote-dir", default="/opt/phoenix")
+    s.add_argument("--packages", default=str(ROOT / "packages"), help="local packages folder (without the vault)")
+    s.set_defaults(func=cmd_init)
+
+    for name, func, text in [
+        ("bootstrap", cmd_bootstrap, "install Docker and harden a fresh server (once)"),
+        ("deploy", cmd_deploy, "upload the server code and (re)start it"),
+        ("configure", cmd_configure, "set bot token and Telegram API keys on the server"),
+        ("login", cmd_login, "log the server into your Telegram account"),
+        ("account", cmd_account, "create _account.toml: auto-reply, bio, posts after trigger"),
+        ("push", cmd_push, "encrypt packages and upload them"),
+        ("edit", cmd_edit, "open your packages for editing (unlocks the vault), then push"),
+        ("vault-init", cmd_vault_init, "keep packages on this PC encrypted (gocryptfs)"),
+        ("lock", cmd_lock, "lock the vault if it stayed unlocked"),
+        ("status", cmd_status, "show the switch state"),
+        ("log", cmd_log, "show recent events"),
+        ("logs", cmd_logs, "follow server logs"),
+    ]:
+        sub.add_parser(name, help=text).set_defaults(func=func)
+
+    s = sub.add_parser("new", help="create a package for a new recipient")
+    s.add_argument("id", help="folder name, e.g. mom")
+    s.set_defaults(func=cmd_new)
+
+    a = p.parse_args()
+    a.func(a)
+
+
+if __name__ == "__main__":
+    main()
