@@ -1,0 +1,232 @@
+"""Owner control bot. It ignores everyone except OWNER_ID; any message from you counts as a check-in."""
+
+from datetime import date
+
+from aiogram import F, Router
+from aiogram.filters import Command, CommandObject
+from aiogram.types import BotCommand, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+
+from . import durations
+from .db import DEFAULT_SETTINGS, SETTING_HELP
+from .durations import fmt
+from .engine import Engine
+from .state import events_text
+
+COMMANDS = [
+    BotCommand(command="checkin", description="I'm OK — reset the timer"),
+    BotCommand(command="status", description="Current state"),
+    BotCommand(command="pause", description="Pause, e.g. /pause 30d"),
+    BotCommand(command="resume", description="End the pause"),
+    BotCommand(command="activity", description="Count your Telegram activity as check-in: on/off"),
+    BotCommand(command="settings", description="Show timer settings"),
+    BotCommand(command="set", description="Change a setting, e.g. /set checkin_interval 5d"),
+    BotCommand(command="verify", description="Check recipients and packages"),
+    BotCommand(command="test", description="Send all packages to your Saved Messages"),
+    BotCommand(command="panic", description="Trigger delivery now"),
+    BotCommand(command="cancel", description="Cancel a pending panic"),
+    BotCommand(command="abort", description="Stop a running delivery"),
+    BotCommand(command="rearm", description="Arm again after delivery"),
+    BotCommand(command="paiduntil", description="Hosting paid until, e.g. /paiduntil 2027-10-01"),
+    BotCommand(command="log", description="Recent events"),
+    BotCommand(command="help", description="How it works"),
+]
+
+HELP = """🔥 Phoenix — dead man's switch
+
+Check in by tapping "✅ I'm OK" or sending any message to this bot. Messages you write anywhere in Telegram count too, but the button is still needed every 30 days. If you stay silent, Phoenix reminds you, escalates to an alarm, and finally delivers each package from your Telegram account to its recipient.
+
+/status — current state and time left
+/pause 30d — going offline (trip, hospital); /resume to end early
+/activity on|off — count your Telegram activity as a check-in
+/settings, /set <name> <duration> — change timings (durations: 30m, 12h, 7d, 2w, 1y, 1d12h)
+/verify — check that every recipient can be found
+/test — send everything to your own Saved Messages, exactly as recipients would see it
+/panic — trigger delivery now (with a cancel window); /cancel to stop it
+/abort — stop a delivery and cancel messages already scheduled in Telegram
+/paiduntil YYYY-MM-DD — get reminded before hosting expires
+/log — recent events"""
+
+
+def checkin_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✅ I'm OK", callback_data="checkin")]])
+
+
+def review_keyboard() -> InlineKeyboardMarkup:
+    button = InlineKeyboardButton(text="👍 Still up to date", callback_data="reviewed")
+    return InlineKeyboardMarkup(inline_keyboard=[[button]])
+
+
+KEYBOARDS = {"checkin": checkin_keyboard, "review": review_keyboard}
+
+
+def build_router(engine: Engine, owner_id: int) -> Router:
+    r = Router()
+
+    async def owner_only(handler, event, data):
+        user = getattr(event, "from_user", None)
+        if user is None or user.id != owner_id:
+            return None
+        if engine.checkin():
+            await engine.notify("✅ Check-in recorded, alarm cleared.")
+        return await handler(event, data)
+
+    r.message.outer_middleware(owner_only)
+    r.callback_query.outer_middleware(owner_only)
+
+    def next_due() -> str:
+        return f"Next check-in due in {fmt(engine.store.setting('checkin_interval'))}."
+
+    @r.message(Command("start", "help"))
+    async def help_(m: Message):
+        await m.answer(HELP, reply_markup=checkin_keyboard())
+
+    @r.message(Command("checkin"))
+    async def checkin(m: Message):
+        await m.answer(f"✅ Got it. {next_due()}")
+
+    @r.callback_query(F.data == "checkin")
+    async def checkin_button(q: CallbackQuery):
+        await q.answer("Check-in recorded")
+        await q.message.answer(f"✅ Got it. {next_due()}")
+
+    @r.message(Command("status"))
+    async def status(m: Message):
+        await m.answer(engine.status(), reply_markup=checkin_keyboard())
+
+    @r.message(Command("settings"))
+    async def settings(m: Message):
+        lines = [f"{name} = {fmt(value)}\n   {SETTING_HELP[name]}" for name, value in engine.store.settings().items()]
+        await m.answer("\n".join(lines) + "\n\nChange with: /set <name> <duration>")
+
+    @r.message(Command("set"))
+    async def set_(m: Message, command: CommandObject):
+        parts = (command.args or "").split()
+        if len(parts) != 2 or parts[0] not in DEFAULT_SETTINGS:
+            await m.answer("Usage: /set <name> <duration>\nNames: " + ", ".join(DEFAULT_SETTINGS))
+            return
+        name, raw = parts
+        try:
+            seconds = durations.parse(raw)
+        except ValueError as e:
+            await m.answer(str(e))
+            return
+        if seconds < 60:
+            await m.answer("Minimum is 1m.")
+            return
+        s = engine.store
+        after = {**s.settings(), name: seconds}
+        if after["trigger_after"] <= after["alarm_after"]:
+            await m.answer("trigger_after must be longer than alarm_after.")
+            return
+        if after["button_every"] < after["checkin_interval"]:
+            await m.answer("button_every can't be shorter than checkin_interval.")
+            return
+        s.set_setting(name, seconds)
+        s.log("settings", f"{name} = {fmt(seconds)}")
+        await m.answer(f"✅ {name} = {fmt(seconds)}\n\n{engine.status()}")
+
+    @r.message(Command("pause"))
+    async def pause(m: Message, command: CommandObject):
+        try:
+            seconds = durations.parse(command.args or "")
+        except ValueError as e:
+            await m.answer(f"Usage: /pause 30d\n{e}")
+            return
+        engine.pause(seconds)
+        await m.answer(f"⏸ Paused for {fmt(seconds)}. The timer restarts when the pause ends. /resume to end early.")
+
+    @r.message(Command("resume"))
+    async def resume(m: Message):
+        engine.resume()
+        await m.answer(f"▶️ Resumed. {next_due()}")
+
+    @r.message(Command("activity"))
+    async def activity(m: Message, command: CommandObject):
+        arg = (command.args or "").strip().lower()
+        if arg not in ("on", "off"):
+            await m.answer("Usage: /activity on  or  /activity off")
+            return
+        engine.set_activity(arg == "on")
+        if arg == "on":
+            every = fmt(engine.store.setting("button_every"))
+            await m.answer(f"✅ Messages you send anywhere in Telegram now count as check-ins (button still needed every {every}).")
+        else:
+            await m.answer("✅ Only the button and messages to this bot count as check-ins now.")
+
+    @r.callback_query(F.data == "reviewed")
+    async def reviewed(q: CallbackQuery):
+        engine.review_ack()
+        await q.answer("Noted")
+        await q.message.edit_reply_markup(reply_markup=None)
+        await q.message.answer(f"👍 Got it. Next reminder in {fmt(engine.store.setting('review_every'))}.")
+
+    @r.message(Command("verify"))
+    async def verify(m: Message):
+        await m.answer("🔎 Checking packages and recipients…")
+        await m.answer(await engine.verify())
+
+    @r.message(Command("test"))
+    async def test(m: Message):
+        if engine.start_test():
+            await m.answer("🧪 Test started: every package goes to your Saved Messages. /abort to stop.")
+        else:
+            await m.answer("Not now: a delivery is running or Phoenix has already been triggered.")
+
+    @r.message(Command("panic"))
+    async def panic(m: Message):
+        delay = fmt(engine.store.setting("panic_delay"))
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="🚨 Yes, trigger", callback_data="panic_yes")],
+                [InlineKeyboardButton(text="No", callback_data="panic_no")],
+            ]
+        )
+        await m.answer(f"Trigger delivery? You'll have {delay} to cancel.", reply_markup=kb)
+
+    @r.callback_query(F.data == "panic_yes")
+    async def panic_yes(q: CallbackQuery):
+        await q.answer()
+        await q.message.edit_reply_markup(reply_markup=None)
+        if engine.panic():
+            delay = fmt(engine.store.setting("panic_delay"))
+            await q.message.answer(f"🚨 Panic armed. Delivery starts in {delay}. Send /cancel to stop it.")
+        else:
+            await q.message.answer("Already delivering or delivered.")
+
+    @r.callback_query(F.data == "panic_no")
+    async def panic_no(q: CallbackQuery):
+        await q.answer("Cancelled")
+        await q.message.edit_reply_markup(reply_markup=None)
+
+    @r.message(Command("cancel"))
+    async def cancel(m: Message):
+        await m.answer("✅ Panic cancelled." if engine.cancel_panic() else "No panic is pending.")
+
+    @r.message(Command("abort"))
+    async def abort(m: Message):
+        await m.answer(await engine.abort() or "Nothing is being delivered.")
+
+    @r.message(Command("rearm"))
+    async def rearm(m: Message):
+        await m.answer(await engine.rearm() or "Phoenix is already armed.")
+
+    @r.message(Command("paiduntil"))
+    async def paid_until(m: Message, command: CommandObject):
+        try:
+            paid = date.fromisoformat((command.args or "").strip())
+        except ValueError:
+            await m.answer("Usage: /paiduntil 2027-10-01")
+            return
+        engine.store.set("paid_until", paid.isoformat())
+        engine.store.delete("billing_notified")
+        await m.answer(f"💳 Hosting paid until {paid}. You'll be reminded 30, 14 and 7 days before.")
+
+    @r.message(Command("log"))
+    async def log_(m: Message):
+        await m.answer(events_text(engine.store))
+
+    @r.message()
+    async def anything(m: Message):
+        await m.answer(f"✅ Check-in recorded. {next_due()}\n/help for commands.")
+
+    return r
