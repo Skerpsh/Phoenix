@@ -27,7 +27,7 @@ fi
 systemctl enable --now docker
 docker compose version
 
-echo "==> Firewall: only SSH is open"
+echo "==> Firewall: allow SSH (existing rules are kept; Phoenix itself needs no open ports)"
 ufw allow OpenSSH
 ufw --force enable
 

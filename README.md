@@ -139,13 +139,13 @@ Make sure key-based login works (`ssh root@SERVER_IP` without a password). If yo
 ssh-copy-id root@SERVER_IP
 ```
 
-> `phoenix bootstrap` enables a firewall that leaves **only SSH** open, and disables password login. Use a dedicated server, or check that nothing else running on it needs open ports.
+> `phoenix bootstrap` enables the firewall (ufw) if it is off, allows SSH, and **disables SSH password login**. Existing firewall rules are kept, but if the firewall was off, any other service on the server becomes unreachable until you allow its ports (`ufw allow 443/tcp`). Phoenix itself needs no open ports. A dedicated server is still the safer choice, since whoever controls it controls your Telegram account.
 
 ### 3. Set up Phoenix
 
 ```bash
 phoenix init --server root@SERVER_IP   # remember the server
-phoenix bootstrap                      # updates, Docker, firewall, key-only SSH (once)
+phoenix bootstrap                      # updates, Docker, firewall, key-only SSH (safe to re-run)
 phoenix deploy                         # upload and build the server
 phoenix configure                      # bot token, your user id, api_id, api_hash, time zone
 phoenix login                          # log the server into your Telegram account
@@ -283,7 +283,7 @@ The bot ignores everyone except the owner.
 | Command | Description |
 |---|---|
 | `phoenix init --server root@IP` | connect to a server (`--remote-dir`, default `/opt/phoenix`) |
-| `phoenix bootstrap` | prepare a fresh server (once) |
+| `phoenix bootstrap` | prepare the server (safe to re-run) |
 | `phoenix deploy` | upload the server code and (re)start it |
 | `phoenix configure` | write the server's `.env` |
 | `phoenix login` | log the server into your Telegram account |
