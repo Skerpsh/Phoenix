@@ -126,7 +126,7 @@ Progress is stored per item. An interrupted delivery resumes where it stopped an
 ### 1. Get the CLI
 
 ```bash
-git clone https://github.com/<you>/Project_PHOENIX.git
+git clone https://github.com/Skerpsh/Phoenix.git
 cd Project_PHOENIX
 mkdir -p ~/.local/bin && ln -s "$PWD/cli/phoenix" ~/.local/bin/phoenix
 ```
