@@ -1,0 +1,5 @@
+.env
+data/
+packages/
+__pycache__/
+vault/

@@ -1,0 +1,14 @@
+services:
+  phoenix:
+    build: ./server
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - ./data:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
