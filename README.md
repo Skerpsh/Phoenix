@@ -27,6 +27,7 @@ encrypted vault ── phoenix push ─────►  encrypted packages
 - [Project layout](#project-layout)
 - [Development](#development)
 - [Disclaimer](#disclaimer)
+- [License](#license)
 
 ---
 
@@ -360,3 +361,7 @@ The engine can be tested without Telegram by passing a fake account object to `E
 ## Disclaimer
 
 Phoenix automates your **personal** Telegram account through the official API. Use it only for your own account and for its intended purpose; sending spam or bulk messages can get an account restricted under Telegram's terms. The software is provided as is, without any warranty. Don't make it the only place where important information or instructions are kept, and pair it with proper legal arrangements (such as a will) where those matter.
+
+## License
+
+[MIT](LICENSE)
