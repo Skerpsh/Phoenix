@@ -62,6 +62,7 @@ Every interval can be changed. → [How it works in detail](docs/how-it-works.md
 - ⏰ **Delayed and dated letters:** "a year later", "on her birthday in 2034". Anything due within a year is handed to Telegram's own scheduled messages, so it arrives even if the server is gone by then.
 - 🔁 **Backup person:** if someone doesn't read their package in time, or can't be found, it goes to someone else.
 - 🚨 **Two triggers:** silence, and a panic button. Each package chooses which one sends it.
+- 🤫 **Duress code:** a phrase that looks like an ordinary check-in, but quietly starts the panic delivery while the bot keeps showing a normal status.
 - 👤 **Account actions:** a one-time auto-reply to people who write to you, a new profile bio, and posts to groups or channels.
 - 🧪 **Rehearsal:** sends everything to your own Saved Messages, exactly as your people would receive it.
 - ⏹ **Undo:** stops a delivery, cancels messages already scheduled in Telegram and restores your bio.
@@ -144,29 +145,30 @@ Then open Telegram → Saved Messages to see exactly what they will receive.
 
 ## Everyday use
 
-Run `phoenix`. The top of the screen shows how things stand. Move with **↑/↓**, choose with **Enter**, go back with **Esc**.
+Run `phoenix`. After a short splash with the logo (the same farewell greets you on the way out, then the terminal is cleared), the top of the screen shows how things stand. Move with **↑/↓**, choose with **Enter**, go back with **Esc**. The terminal needs to be at least 80×24; if it's smaller, Phoenix shows the current and needed size until you enlarge it.
 
 ```
-🔥 Phoenix  root@203.0.113.7
+P H O E N I X   root@203.0.113.7
+
 🟢 armed · next check-in in 6d 23h
 If you stay silent, delivery starts in 20d 23h
-Telegram: ✅ logged in as Alex (@alex)
-Packages on the server: 3
+Telegram ✅ logged in as Alex (@alex) · 3 package(s) on the server
 
 What do you want to do?
- ❯ ✅ I'm OK: check in
-   📦 Recipients and what they receive
-   👤 Your account after the trigger: auto-reply, bio, posts
-   ⬆️ Upload changes to the server
-   🧪 Rehearsal: send everything to my Saved Messages
-   🔎 Check that every recipient can be found
-   ⏸ Pause: going offline for a while
-   ⏱ Timers and reminders
-   🚨 Panic button
-   📜 History
-   🖥 Server
-   🔐 Vault on this computer
-   ← Quit
+❯ ✅ I'm OK: check in
+  📦 Recipients and what they receive
+  👤 Your account after the trigger: auto-reply, bio, posts
+  ⬆️ Upload changes to the server
+  🧪 Rehearsal: send everything to my Saved Messages
+  🔎 Check that every recipient can be found
+  ⏸ Pause: going offline for a while
+  ⏱ Timers and reminders
+  🚨 Panic button
+  🤫 Duress code: a silent alarm
+  📜 History
+  🖥 Server
+  🔐 Vault on this computer
+  ← Quit
 ```
 
 Day to day, you don't need the computer at all. Your control bot in Telegram has the **"✅ I'm OK"** button and commands such as `/status`, `/pause 14d` and `/panic`.

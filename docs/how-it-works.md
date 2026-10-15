@@ -62,6 +62,14 @@ The `alarm_min` rule protects against downtime: if the server was off for weeks,
 
 Each package, and the account actions, says which triggers send it.
 
+The **duress code** is a panic in disguise. It sets a pending panic due after the duress delay, plus a *silent* flag. While the flag is on:
+
+- the engine sends no notifications;
+- the bot's status and log are computed as if nothing happened;
+- `/cancel`, `/abort` and `/rearm` pretend to do nothing.
+
+The menu on your computer sees the real state, because `ctl` reveals it, and clears the flag when you cancel, stop or re-arm.
+
 ## Delivery and scheduling
 
 Every item has a due time: the trigger time, plus the package's delay, plus the item's own offset (`@+1y`) or a fixed date (`@2034-05-12`). Then:
@@ -135,7 +143,8 @@ install.sh             installer for your computer
 cli/phoenix            the `phoenix` command
 cli/phx/
   screens.py           the menus: setup, recipients, check-ins, timers, server, vault
-  ui.py                arrow-key menus and questions
+  ui.py                arrow-key menus, questions, splash, terminal size check
+  art.py               the logo
   packages.py          package folders, checks, encryption and upload
   core.py              settings, SSH, server setup steps, vault
 server/phoenix/
@@ -147,6 +156,7 @@ server/phoenix/
   packages.py          the encrypted package format
   state.py, db.py      state views and SQLite storage
   ctl.py               commands the menu runs over SSH
+  duress.py            the duress code (salted scrypt hash) and the silent alarm
   login.py, logout.py, keygen.py   Telegram login/logout, the encryption key
 deploy/bootstrap.sh    server preparation (setup step 2)
 docker-compose.yml     the service; data lives in /opt/phoenix/data

@@ -7,6 +7,7 @@
 - [Upload, check, rehearse](#upload-check-rehearse)
 - [Timers and reminders](#timers-and-reminders)
 - [Pause, panic, stop](#pause-panic-stop)
+- [Duress code](#duress-code)
 - [The control bot](#the-control-bot)
 - [The server menu](#the-server-menu)
 - [Updating Phoenix](#updating-phoenix)
@@ -17,7 +18,9 @@
 
 ## The menu
 
-Run `phoenix` in a terminal. Move with **↑/↓** (or `j`/`k`), choose with **Enter** (or the item's number), go back with **Esc** (or `q`).
+Run `phoenix` in a terminal. A short splash shows the logo (any key skips it), then the menu. Move with **↑/↓** (or `j`/`k`), choose with **Enter** (or the item's number), go back with **Esc** (or `q`). Long lists scroll, and resizing the window redraws the screen.
+
+The terminal must be at least **80 columns × 24 rows**. If it's smaller, Phoenix shows the current and the needed size, the way btop does, and continues as soon as the window is big enough.
 
 The top of the screen shows:
 
@@ -159,6 +162,26 @@ With the defaults, delivery happens after **21 days** of total silence. Pick val
 | ⏹ **Stop the delivery** | Shown while delivering: stops it, cancels messages already scheduled in Telegram, restores your bio, and arms Phoenix again. Messages already delivered can't be taken back. |
 | 🔁 **Arm Phoenix again** | After a completed delivery, starts watching again. |
 
+## Duress code
+
+If someone ever forces you to check in, or to stop a delivery, the duress code lets you raise the alarm without them noticing.
+
+1. In the menu, open **🤫 Duress code: a silent alarm** → **Set the code**. Choose a phrase you'd never send by accident but that looks ordinary, for example *"all good, talk later"*. Capital letters and extra spaces don't matter. The server stores only a fingerprint of it.
+2. Under pressure, send this phrase to your bot instead of a normal message.
+
+What happens:
+
+- The bot answers **exactly** as it does to any ordinary message, so whoever is watching sees nothing unusual.
+- Phoenix quietly starts the **panic delivery** after the duress delay (default **1 hour**, changeable in the same screen), giving them time to leave.
+- Until you stop it, the bot keeps up appearances: `/status` and `/log` look normal, no alerts are sent, and `/cancel`, `/abort` and `/rearm` pretend there's nothing to stop.
+- **Only the menu on your computer** shows the silent alarm and can stop it: ✋ Cancel the silent alarm before delivery, ⏹ Stop the delivery while it runs, or 🔁 Arm Phoenix again afterwards.
+
+Packages and account actions set to run **on panic** are what's sent. Keep in mind:
+
+- Messages sent from your account also appear on your own phone, which is another reason for the delay.
+- A changed bio is visible to anyone.
+- The bot never mentions the duress code, not even in `/help` or `/settings`.
+
 ## The control bot
 
 Day to day you can do everything from Telegram. The bot ignores everyone except you.
@@ -204,7 +227,7 @@ If the menu says **"The server runs an older Phoenix"**, you updated your comput
 
 ## Backups
 
-- **Your packages** live in the vault on your computer: `~/.local/share/phoenix/vault` (or `vault/` inside the Phoenix folder, if you installed an early version). Copy that folder anywhere: a USB stick, the cloud. Without your password or **master key** it's unreadable. Keep the master key on paper.
+- **Your packages** live in the vault on your computer: `~/.local/share/phoenix/vault`. Early versions kept it inside the Phoenix folder; the menu moves it there automatically. Copy that folder anywhere: a USB stick, the cloud. Without your password or **master key** it's unreadable. Keep the master key on paper.
 - **The server** is not backed up by Phoenix, and doesn't need to be. If it's lost while you're alive, choose 🚚 Move Phoenix to another server: the setup runs again and your packages are uploaded from your computer.
 
 ## Uninstalling

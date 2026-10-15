@@ -42,6 +42,7 @@ When something fails, Phoenix shows a line starting with ❌ that says what went
 | `❌ cannot find @someone` in the recipient check | Check the username with its `t.me` link. Phone numbers must be saved in your Telegram contacts. |
 | "Could not lock the vault" | Close file manager windows and terminals that are inside the vault folder, then run `phoenix lock`. |
 | Forgot the vault password | `gocryptfs -passwd -masterkey=<your master key> ~/.local/share/phoenix/vault` |
+| "Terminal size too small" | Make the window at least 80×24 (maximize it, or make the font smaller). Phoenix continues by itself. |
 | Dated letters arrive at the wrong hour | Fix the time zone: Server → Change the bot token or Telegram API keys. |
 
 ## FAQ

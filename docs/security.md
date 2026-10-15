@@ -12,6 +12,7 @@ Phoenix has to do something unusual: **act on your behalf when you can't.** That
 | Someone else uses your control bot | The bot ignores everyone except your Telegram user id. |
 | Someone who has your phone keeps postponing delivery just by using Telegram | Telegram activity alone isn't enough: an explicit check-in is required at least every 30 days (`button_every`). |
 | The server was down and fires the moment it's back | The alarm phase always runs for at least a day (`alarm_min`) before delivery. |
+| Someone forces you to check in or to cancel | The duress code looks like an ordinary check-in but quietly starts the panic delivery; the bot keeps showing a normal status and ignores attempts to cancel. Only a salted hash of the code is stored. |
 | A mistake: wrong person, wrong text | The `t.me` link check while typing usernames; the recipient check after every upload; the rehearsal; **Stop the delivery** cancels anything still scheduled. |
 
 ## What Phoenix does **not** protect against
@@ -24,7 +25,7 @@ Phoenix has to do something unusual: **act on your behalf when you can't.** That
 - **A compromised computer.** Malware on your computer can read your packages while the vault is open, and can use your SSH key.
 - **Telegram itself.** Delivered messages are ordinary Telegram cloud chats. They aren't end-to-end encrypted, so Telegram can technically read them. For the most sensitive things, such as master passwords, consider handing over access to a password manager (many offer "emergency access") instead of the passwords themselves.
 - **Recipients.** Once something is delivered, it can't be taken back. Messages still scheduled in Telegram can be cancelled with **Stop the delivery**.
-- **Pressure on you.** Someone who forces you to check in, or to stop a delivery, can do so.
+- **Pressure on you,** partly. The [duress code](usage.md#duress-code) lets you raise a silent alarm while appearing to check in. It doesn't help if you're forced to use your computer, or if the attacker knows about the duress code and watches your Telegram for outgoing messages.
 
 ## Things that can stop delivery
 
