@@ -2,3 +2,4 @@
 pytest==9.1.1
 ruff==0.17.0
 shellcheck-py==0.11.0.1  # same shellcheck version everywhere
+pip-audit==2.10.1  # known vulnerabilities in the server's dependencies

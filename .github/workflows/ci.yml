@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Lint and test
@@ -21,6 +24,8 @@ jobs:
       - run: ruff check .
       - run: shellcheck install.sh deploy/bootstrap.sh
       - run: pytest -v
+      - name: Known vulnerabilities in the server's dependencies
+        run: pip-audit -r server/requirements.txt --progress-spinner off
 
   cli:
     name: CLI on Python ${{ matrix.python }}
