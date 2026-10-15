@@ -4,6 +4,7 @@ Layout on the server (all names are hashes, nothing readable on disk):
     packages/<package-hash>/manifest.json.age
     packages/<package-hash>/<item-hash>.age
     packages/_account.json.age            (optional: what to do with your account on trigger)
+    packages/_capsules/<hash>/...         (time capsules: sent on their date, whatever happens)
 """
 
 import hashlib
@@ -17,6 +18,7 @@ from .durations import fmt
 
 TRIGGERS = ("silence", "panic")
 ACCOUNT_FILE = "_account.json.age"
+CAPSULES_DIR = "_capsules"
 DEFAULT_BACKUP_AFTER = 7 * 86400
 
 
@@ -54,6 +56,7 @@ class Package:
     backup: str | None = None
     backup_after: int = DEFAULT_BACKUP_AFTER
     backup_note: str | None = None
+    capsule_date: str | None = None  # a time capsule: sent on this local date-time, trigger or not
 
     @property
     def size(self) -> int:
@@ -65,6 +68,9 @@ class Package:
 
     def start(self, trigger_ts: float) -> float:
         return trigger_ts + self.delay
+
+    def capsule_due(self, tz: tzinfo) -> float:
+        return datetime.fromisoformat(self.capsule_date).replace(tzinfo=tz).timestamp()
 
     def latest_offset(self, now: float, tz: tzinfo) -> float:
         """How far after a trigger right now the last item would be sent (in seconds)."""
@@ -84,6 +90,7 @@ class Loaded:
     packages: list[Package]
     actions: AccountActions | None
     errors: list[str]
+    capsules: list[Package] = field(default_factory=list)
 
     def active(self, kind: str) -> list[Package]:
         posts = self.actions.posts if self.actions and kind in self.actions.on else []
@@ -93,7 +100,7 @@ class Loaded:
 def package_dirs(packages_dir: Path) -> list[Path]:
     if not packages_dir.exists():
         return []
-    return sorted(p for p in packages_dir.iterdir() if p.is_dir())
+    return sorted(p for p in packages_dir.iterdir() if p.is_dir() and not p.name.startswith("_"))
 
 
 def _load_package(d: Path, crypto: Crypto) -> Package:
@@ -112,7 +119,7 @@ def _load_package(d: Path, crypto: Crypto) -> Package:
         hid=d.name, name=m["name"], telegram=m["telegram"], items=items,
         on=tuple(m.get("on", TRIGGERS)), delay=m.get("delay", 0),
         backup=m.get("backup"), backup_after=m.get("backup_after", DEFAULT_BACKUP_AFTER),
-        backup_note=m.get("backup_note"),
+        backup_note=m.get("backup_note"), capsule_date=m.get("capsule_date"),
     )
 
 
@@ -142,13 +149,20 @@ def load_all(packages_dir: Path, crypto: Crypto) -> Loaded:
             actions = _load_actions(account_file, crypto)
         except Exception as e:
             errors.append(f"account actions: {e}")
-    return Loaded(packages, actions, errors)
+    capsules = []
+    for d in package_dirs(packages_dir / CAPSULES_DIR):
+        try:
+            capsules.append(_load_package(d, crypto))
+        except Exception as e:
+            errors.append(f"time capsule {d.name}: {e}")
+    return Loaded(packages, actions, errors, capsules)
 
 
 def signature(packages_dir: Path) -> str:
     """Changes whenever the CLI pushes new packages."""
     h = hashlib.sha256()
-    files = [d / "manifest.json.age" for d in package_dirs(packages_dir)] + [packages_dir / ACCOUNT_FILE]
+    dirs = package_dirs(packages_dir) + package_dirs(packages_dir / CAPSULES_DIR)
+    files = [d / "manifest.json.age" for d in dirs] + [packages_dir / ACCOUNT_FILE]
     for m in files:
         if m.exists():
             st = m.stat()

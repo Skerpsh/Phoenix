@@ -123,6 +123,12 @@ def status_text(s: Store, packages_count: int, *, reveal: bool = False) -> str:
     else:
         lines.append(f"Telegram account: {'✅' if ok else '⚠️'} {s.get('health_text', '')}")
 
+    checked = s.get("selfcheck_at")
+    if checked:
+        found = s.get("selfcheck_problems", [])
+        result = f"⚠️ {len(found)} problem(s)" if found else "✅ all recipients found, all files readable"
+        lines.append(f"Weekly self-check: {result} ({fmt(now - checked)} ago)")
+
     paid = s.get("paid_until")
     lines.append(f"Hosting paid until: {paid}" if paid else "Hosting paid until: not set (/paiduntil YYYY-MM-DD)")
     return "\n".join(lines)

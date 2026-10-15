@@ -55,6 +55,7 @@ class Account:
         self.client = TelegramClient(str(cfg.session_path), cfg.api_id, cfg.api_hash)
         # Always wait out flood limits instead of failing a delivery.
         self.client.flood_sleep_threshold = 24 * 3600
+        self.ttl_days: int | None = None  # "delete my account if away for", from the last health check
 
     async def connect(self) -> None:
         await self.client.connect()
@@ -72,6 +73,7 @@ class Account:
                 return False, "session is not logged in (on your computer: phoenix → Server → Log in to Telegram again)"
             me = await self.client.get_me()
             ttl = await self.client(functions.account.GetAccountTTLRequest())
+            self.ttl_days = ttl.days
             return True, f"logged in as {display_name(me)}; account self-destruct after {ttl.days} days offline"
         except Exception as e:
             return False, f"{type(e).__name__}: {e}"
@@ -81,6 +83,8 @@ class Account:
         """target: @username, +phone (must be in your contacts) or numeric id."""
         t = target.strip()
         entity = await self.client.get_entity(int(t) if t.lstrip("-").isdigit() else t)
+        if getattr(entity, "deleted", False):
+            raise ValueError("this Telegram account was deleted")
         return entity.id, display_name(entity)
 
     async def input_peer(self, user_id: int):

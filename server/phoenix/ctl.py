@@ -78,6 +78,12 @@ def main() -> None:
         if store.get("bot_problem"):
             problems.append(f"Control bot: {store.get('bot_problem')}. Check-ins only work through your Telegram "
                             "activity now; fix it: Server → Change the bot token or Telegram API keys.")
+        for problem in store.get("selfcheck_problems", []):
+            problems.append(f"Self-check: {problem}")
+        ttl = store.get("account_ttl_days")
+        if ttl is not None and ttl < 365:
+            problems.append(f"Telegram deletes your account after {ttl} days away; a deleted account delivers "
+                            "nothing. In Telegram: Settings → Privacy and Security → If away for → the longest.")
         if time.time() - store.get("bot_conflict_at", 0) < 600:
             problems.append("Another program is reading your bot (an old Phoenix server?). Remove it, or it may "
                             "miss your check-ins and deliver by mistake.")

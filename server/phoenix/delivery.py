@@ -151,6 +151,10 @@ class Run:
 
     @staticmethod
     def _test_header(pkg: Package) -> str:
+        if pkg.capsule_date:
+            return (f"🧪 PHOENIX TEST\n⏳ Time capsule “{pkg.name}” for {pkg.telegram}\n"
+                    f"Sent on {pkg.capsule_date.replace('T', ' at ')}, whatever happens.\n"
+                    "Everything below is exactly what they will receive.")
         lines = [
             "🧪 PHOENIX TEST",
             f"Recipient: {pkg.name} ({pkg.telegram})",

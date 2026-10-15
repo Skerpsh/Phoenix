@@ -23,7 +23,7 @@ from .crypto import Crypto
 from .db import Store
 from .delivery import HORIZON, Result, Run, Stopped
 from .durations import fmt
-from .packages import ACCOUNT_FILE, Loaded, human_size, load_all, package_dirs, signature
+from .packages import ACCOUNT_FILE, CAPSULES_DIR, Loaded, human_size, load_all, package_dirs, signature
 
 log = logging.getLogger(__name__)
 
@@ -31,6 +31,8 @@ TICK = 60
 RETRY_DELAY = 30 * 60
 WATCH_INTERVAL = 10 * 60
 HEALTH_EVERY = 6 * 3600
+SELF_CHECK_EVERY = 7 * 86400
+MIN_ACCOUNT_TTL = 365  # days: below this, warn that Telegram may delete the account before delivery
 REQUEST_POLL = 1
 ACTIVITY_THROTTLE = 5 * 60
 REVIEW_REPEAT = 7 * 86400
@@ -51,6 +53,7 @@ class Engine:
         self._loaded_sig: str | None = None
         self._requests: asyncio.Task | None = None
         self._maintenance: asyncio.Task | None = None
+        self._quiet_sends = 0  # time capsules being sent: they're Phoenix's messages, not signs of life
 
     async def notify(self, text: str, keyboard: str | None = None) -> None:
         """Message the owner, except during a silent alarm: then the bot must look as if nothing happened."""
@@ -98,7 +101,8 @@ class Engine:
     def on_activity(self) -> None:
         """Called for every message you send from any of your devices."""
         s = self.store
-        if not state.activity_enabled(s) or self.phase not in ("armed", "overdue", "alarm") or self.delivering:
+        if (not state.activity_enabled(s) or self.phase not in ("armed", "overdue", "alarm") or self.delivering
+                or self._quiet_sends):
             return
         now = time.time()
         if now - s.get("last_activity", 0) >= ACTIVITY_THROTTLE:
@@ -174,7 +178,7 @@ class Engine:
 
     async def verify(self) -> str:
         loaded = await self.loaded()
-        if not loaded.packages and not loaded.actions and not loaded.errors:
+        if not loaded.packages and not loaded.actions and not loaded.errors and not loaded.capsules:
             return "No packages uploaded yet (on your computer: phoenix → Upload changes to the server)."
         now, tz, lines = time.time(), self.cfg.tz, []
         for p in loaded.packages:
@@ -205,6 +209,10 @@ class Engine:
             for p in a.posts:
                 ok, label = await self._resolve(p.hid, p.telegram)
                 lines.append(f"    {'✅' if ok else '❌'} post to {label if ok else p.telegram + ' not found'}")
+        for c in loaded.capsules:
+            ok, label = await self._resolve(c.hid, c.telegram)
+            to = label if ok else f"{c.telegram} not found ({label})"
+            lines.append(f"{'⏳' if ok else '❌'} time capsule “{c.name}” → {to} · on {c.capsule_date.replace('T', ' ')}")
         lines += [f"❌ {e}" for e in loaded.errors]
         if self.cfg.timezone_problem:
             lines.append(f"⚠️ {self.cfg.timezone_problem}")
@@ -301,8 +309,9 @@ class Engine:
         await self._guarded(self._evaluate, self._heartbeat, self._check_billing, self._check_review)
 
     async def _maintenance_tick(self) -> None:
-        """Talks to Telegram, so it may be slow: account health and the recipient check after an upload."""
-        await self._guarded(self._check_health, self._check_packages)
+        """Talks to Telegram, so it may be slow: account health, the recipient check after an upload,
+        the weekly self-check and time capsules."""
+        await self._guarded(self._check_health, self._check_packages, self._self_check, self._check_capsules)
 
     async def tick(self) -> None:
         """One round of everything (tests call this)."""
@@ -475,7 +484,7 @@ class Engine:
             if mode == "test":
                 s.clear_deliveries("test")
                 run.trigger_ts = time.time()
-                packages = loaded.packages + (loaded.actions.posts if loaded.actions else [])
+                packages = loaded.packages + (loaded.actions.posts if loaded.actions else []) + loaded.capsules
                 result = await run.deliver(packages)
                 await self._test_account_actions(loaded)
             else:
@@ -587,13 +596,97 @@ class Engine:
             )
         elif was_ok is False:
             await self.notify("✅ Telegram account is working again.")
+        if ok:
+            await self._check_account_ttl()
+
+    async def _check_account_ttl(self) -> None:
+        """Telegram deletes accounts that stay away too long; a deleted account delivers nothing."""
+        s, days = self.store, getattr(self.account, "ttl_days", None)
+        if days is None:
+            return
+        s.set("account_ttl_days", days)
+        if days < MIN_ACCOUNT_TTL and s.get("ttl_warned") != days:
+            s.set("ttl_warned", days)
+            await self.notify(
+                f"⚠️ Telegram deletes your account after {days} days without activity. A deleted account can't "
+                "deliver anything, and scheduled letters would be lost with it.\n"
+                "In Telegram: Settings → Privacy and Security → “If away for” → choose the longest period."
+            )
+        elif days >= MIN_ACCOUNT_TTL:
+            s.delete("ttl_warned")
+
+    async def _self_check(self, force: bool = False) -> list[str]:
+        """Once a week: can every recipient still be found, and can every file still be decrypted?
+        Tells you only when something breaks, and when it's fixed again."""
+        s, now = self.store, time.time()
+        if not force and now - s.get("selfcheck_at", 0) < SELF_CHECK_EVERY:
+            return s.get("selfcheck_problems", [])
+        loaded = await self.loaded()
+        problems = list(loaded.errors)
+        everyone = loaded.packages + loaded.capsules + (loaded.actions.posts if loaded.actions else [])
+        for p in everyone:
+            targets = [(p.hid, p.telegram)] + ([(p.backup_key, p.backup)] if p.backup else [])
+            for key, ref in targets:
+                ok, label = await self._resolve(key, ref)
+                if not ok:
+                    problems.append(f"{p.name}: {ref} can't be found in Telegram ({label})")
+            for item in p.items:
+                if item.blob is None:
+                    continue
+                try:
+                    await asyncio.to_thread(self.crypto.check, item.blob)
+                except Exception as e:
+                    problems.append(f"{p.name}: a file can't be decrypted ({item.name}: {e})")
+        before = s.get("selfcheck_problems", [])
+        s.set("selfcheck_at", now)
+        s.set("selfcheck_problems", problems)
+        if problems and problems != before:
+            s.log("selfcheck", f"{len(problems)} problem(s)")
+            await self.notify("🩺 Weekly self-check found problems. Your letters may not arrive until you fix them:\n"
+                              + "\n".join(f"• {p}" for p in problems)
+                              + "\nOn your computer: phoenix → Recipients (or Upload changes to the server).")
+        elif before and not problems:
+            s.log("selfcheck", "all problems fixed")
+            await self.notify("🩺 Self-check: everything is fine again.")
+        return problems
+
+    async def _check_capsules(self) -> None:
+        """Time capsules go out on their date, whatever the switch is doing."""
+        loaded = await self.loaded()
+        now, tz = time.time(), self.cfg.tz
+        due = [c for c in loaded.capsules if c.capsule_due(tz) <= now
+               and now >= self.store.get(f"capsule_retry:{c.hid}", 0)
+               and not all(self.store.is_delivered("capsule", c.hid, i.id) for i in c.items)]
+        if not due:
+            return
+        run = Run(mode="capsule", account=self.account, crypto=self.crypto, store=self.store,
+                  tmp_dir=self.cfg.tmp_dir, tz=tz, trigger_ts=now, stop=lambda: False)
+        self._quiet_sends += 1
+        try:
+            for capsule in due:
+                run.trigger_ts = capsule.capsule_due(tz)
+                result = await run.deliver([capsule])
+                if result.failures:
+                    first = self.store.get(f"capsule_retry:{capsule.hid}") is None
+                    self.store.set(f"capsule_retry:{capsule.hid}", now + RETRY_DELAY)
+                    self.store.log("capsule", f"“{capsule.name}” failed, will retry: {'; '.join(result.failures)}")
+                    if first:
+                        await self.notify(f"⚠️ Time capsule “{capsule.name}” could not be delivered yet; retrying "
+                                          f"every {fmt(RETRY_DELAY)}:\n" + "\n".join(f"• {f}" for f in result.failures))
+                else:
+                    self.store.delete(f"capsule_retry:{capsule.hid}")
+                    self.store.log("capsule", f"“{capsule.name}” delivered")
+                    await self.notify(f"⏳ Time capsule “{capsule.name}” delivered.")
+        finally:
+            self._quiet_sends -= 1
 
     async def _check_packages(self) -> None:
         sig = await asyncio.to_thread(signature, self.cfg.packages_dir)
         if sig == self.store.get("pkg_signature"):
             return
         self.store.set("pkg_signature", sig)
-        if not package_dirs(self.cfg.packages_dir) and not (self.cfg.packages_dir / ACCOUNT_FILE).exists():
+        if not (package_dirs(self.cfg.packages_dir) or (self.cfg.packages_dir / ACCOUNT_FILE).exists()
+                or package_dirs(self.cfg.packages_dir / CAPSULES_DIR)):
             return
         self.store.set("pkg_updated_at", time.time())
         self.store.log("packages", "packages updated")
