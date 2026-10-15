@@ -63,7 +63,7 @@ if ! python_ok python3 && ! { command -v python3.11 >/dev/null && python_ok pyth
 fi
 
 # ----------------------------------------------------------------- code
-SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || true)"
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)" || SELF_DIR=""
 if [ -n "$SELF_DIR" ] && [ -f "$SELF_DIR/cli/phoenix" ]; then
     APP_DIR="$SELF_DIR"  # run from a downloaded copy: use it as is
     say "Using Phoenix in $APP_DIR"

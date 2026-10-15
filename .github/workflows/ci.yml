@@ -9,14 +9,14 @@ jobs:
     name: Lint and test
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"  # the server's Python (server/Dockerfile)
           cache: pip
           cache-dependency-path: requirements-dev.txt
       - name: System tools
-        run: sudo apt-get update && sudo apt-get install -y age rsync shellcheck
+        run: sudo apt-get update && sudo apt-get install -y age rsync
       - run: pip install -r requirements-dev.txt
       - run: ruff check .
       - run: shellcheck install.sh deploy/bootstrap.sh
@@ -29,8 +29,8 @@ jobs:
       matrix:
         python: ["3.11", "3.13"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
       - name: The CLI uses only the standard library
@@ -43,6 +43,6 @@ jobs:
     name: Server image
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: docker build -t phoenix-server server
       - run: docker run --rm phoenix-server python -c "import phoenix.main, phoenix.ctl, phoenix.login, phoenix.logout"
