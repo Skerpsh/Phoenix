@@ -6,7 +6,7 @@ import random
 import signal
 import sys
 
-from . import art, core, ui
+from . import __version__, art, core, ui
 from . import packages as pk
 from .core import Failed
 from .screens import App, Restart
@@ -80,6 +80,7 @@ def lock(a) -> None:
 def main() -> None:
     p = argparse.ArgumentParser(prog="phoenix", description="Run without arguments to open the menu: setup, recipients, "
                                 "check-ins, tests, timers, server — everything is there.")
+    p.add_argument("--version", action="version", version=f"Phoenix {__version__}")
     p.set_defaults(func=menu)
     sub = p.add_subparsers(title="shortcuts", metavar="")
     for name, func, text in [

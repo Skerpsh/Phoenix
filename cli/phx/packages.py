@@ -4,6 +4,7 @@ import contextlib
 import hashlib
 import json
 import re
+import secrets
 import shutil
 import subprocess
 import tomllib
@@ -12,7 +13,7 @@ from pathlib import Path
 
 from phoenix import durations
 
-from .core import CACHE, Failed, human, need, rsync, ssh
+from .core import CACHE, Failed, human, need, rsync, save_config, ssh
 
 RECIPIENT_FILE = ".recipient.toml"  # hidden: managed by the menu, not by hand
 LEGACY_RECIPIENT_FILE = "recipient.toml"
@@ -107,6 +108,21 @@ def meta_file(d: Path) -> Path:
     return legacy if legacy.exists() and not (d / RECIPIENT_FILE).exists() else d / RECIPIENT_FILE
 
 
+def natural_key(text: str) -> list[tuple[int, int | str]]:
+    """Sort numbers by value, so "11-…" comes before "100-…"."""
+    return [(0, int(part)) if part.isdigit() else (1, part) for part in re.split(r"(\d+)", text) if part]
+
+
+JUNK_NAMES = {"thumbs.db", "desktop.ini", "ehthumbs.db"}
+JUNK_SUFFIXES = ("~", ".swp", ".swo", ".part", ".crdownload", ".tmp", ".bak")
+
+
+def is_junk(p: Path) -> bool:
+    """Files nobody means to send: hidden files, OS thumbnails, editor backups, half-copied downloads."""
+    name = p.name.lower()
+    return name.startswith(".") or name in JUNK_NAMES or name.endswith(JUNK_SUFFIXES)
+
+
 def package_files(d: Path) -> list[Path]:
     """Everything that gets sent, in sending order."""
     return sorted(
@@ -115,8 +131,9 @@ def package_files(d: Path) -> list[Path]:
             if p.is_file()
             and p.relative_to(d).as_posix() not in META_FILES
             and not any(part.startswith(".") for part in p.relative_to(d).parts)
+            and not is_junk(p)
         ),
-        key=lambda p: p.relative_to(d).as_posix(),
+        key=lambda p: natural_key(p.relative_to(d).as_posix()),
     )
 
 
@@ -341,27 +358,34 @@ def push_from(cfg: dict, packages_dir: Path) -> None:
     if problems:
         raise Problems(problems)
 
+    # Names on the server are hashed with a secret that never leaves this computer, so a folder called
+    # "mom" can't be recognized by hashing likely names.
+    if not cfg.get("name_salt"):
+        cfg["name_salt"] = secrets.token_hex(16)
+        save_config(cfg)
+    salt = cfg["name_salt"]
+
     STAGING.mkdir(parents=True, exist_ok=True)
     cache_path = STAGING.parent / "cache.json"
     cache = json.loads(cache_path.read_text()) if cache_path.exists() else {}
     new_cache, keep = {}, set()
 
     for d, manifest, items in loaded:
-        hid = h16("package:" + d.name)
+        hid = h16(f"{salt}:package:{d.name}")
         out = STAGING / hid
         out.mkdir(exist_ok=True)
         keep.add(hid)
         entries, keep_blobs = [], {"manifest.json.age"}
         for item in items:
             key = f"{d.name}/{item['rel']}"
-            iid = h16(key)
+            iid = h16(f"{salt}:{key}")
             blob = f"{iid}.age"
             st = item["path"].stat()
             stamp = [st.st_size, st.st_mtime_ns, public_key]
-            if cache.get(key) != stamp or not (out / blob).exists():
+            if cache.get(iid) != stamp or not (out / blob).exists():  # the cache holds no names, only hashes
                 print(f"  encrypting {key} ({human(st.st_size)})")
                 age_encrypt(public_key, out / blob, src=item["path"])
-            new_cache[key] = stamp
+            new_cache[iid] = stamp
             keep_blobs.add(blob)
             entry = {"id": iid, "kind": item["kind"], "name": item["path"].name, "blob": blob, "size": st.st_size}
             entry.update({k: item[k] for k in ("after", "date") if k in item})

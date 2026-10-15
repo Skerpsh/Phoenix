@@ -121,6 +121,18 @@ def rsync(cfg: dict, *args: str) -> None:
     sh("rsync", "-e", shlex.join(["ssh", *ssh_opts()]), *sudo, *args)
 
 
+def ssh_target(host: str, *, config: Path | None = None) -> str:
+    """What to connect to: "user@host" as typed; a Host alias from ~/.ssh/config that sets its own User as is;
+    otherwise root@host."""
+    if "@" in host:
+        return host
+    import getpass
+
+    r = subprocess.run(["ssh", *(["-F", str(config)] if config else []), "-G", host], capture_output=True, text=True)
+    user = next((line.split(None, 1)[1] for line in r.stdout.splitlines() if line.startswith("user ")), "")
+    return host if r.returncode == 0 and user and user != getpass.getuser() else f"root@{host}"
+
+
 def key_login_works(cfg: dict) -> bool:
     """True if the server accepts our SSH key (password login is about to be switched off)."""
     args = ["ssh", *ssh_opts(shared=False), "-o", "PasswordAuthentication=no", "-o", "KbdInteractiveAuthentication=no",
@@ -167,10 +179,13 @@ def ctl(cfg: dict, *args: str, input: str | None = None) -> str:
 # --------------------------------------------------------------------- server setup
 def bootstrap(cfg: dict) -> None:
     script = (ROOT / "deploy" / "bootstrap.sh").read_text()
-    sudo = ["sudo", "-n"] if cfg.get("sudo") else []
-    args = ["ssh", *ssh_opts(), cfg["server"], *sudo, "bash", "-s", "--", cfg["remote_dir"]]
+    sudo = "sudo -n " if cfg.get("sudo") else ""
+    # Copy the script over first and run it from a file: run from stdin, any command that reads
+    # stdin (an apt question, say) would swallow the rest of the script.
+    remote = (f'f=$(mktemp) && cat > "$f" && {sudo}bash "$f" {shlex.quote(cfg["remote_dir"])} </dev/null; '
+              'rc=$?; rm -f "$f"; exit $rc')
     sys.stdout.flush()
-    if subprocess.run(args, input=script, text=True).returncode:
+    if subprocess.run(["ssh", *ssh_opts(), cfg["server"], remote], input=script, text=True).returncode:
         raise Failed("preparing the server failed (see the output above)")
 
 
@@ -202,8 +217,21 @@ def fetch_public_key(cfg: dict) -> str:
 
 
 def read_env(cfg: dict) -> dict:
-    r = ssh(cfg, "cat .env 2>/dev/null", capture=True)
+    """The server's .env ({} if it doesn't exist yet). Fails loudly if the server can't be read,
+    so a later write can never replace your keys with an empty file."""
+    r = ssh(cfg, "cat .env 2>/dev/null || true", capture=True)
+    if r.returncode:
+        raise Failed(f"cannot read the settings on {cfg['server']}")
     return dict(line.split("=", 1) for line in r.stdout.splitlines() if "=" in line)
+
+
+def set_env_value(cfg: dict, key: str, value: str) -> None:
+    """Change one setting in the server's .env, keeping all the others."""
+    env = read_env(cfg)
+    if not env.get("BOT_TOKEN"):
+        raise Failed("the server has no settings yet: finish the setup first")
+    env[key] = value
+    write_env(cfg, env)
 
 
 def write_env(cfg: dict, values: dict) -> None:
@@ -228,8 +256,21 @@ def follow_logs(cfg: dict) -> None:
     ssh(cfg, "docker compose logs --tail 100 -f", tty=True)
 
 
+def stop(cfg: dict) -> bool:
+    """Stop Phoenix on a server (it stays stopped after a reboot). False if the server can't be reached."""
+    return ssh(cfg, "docker compose stop", capture=True).returncode == 0
+
+
+def safe_remote_dir(path: str) -> bool:
+    """Only ever delete a folder that is clearly Phoenix's own, never something like / or /home."""
+    parts = Path(path).parts
+    return Path(path).is_absolute() and len(parts) >= 3 and "phoenix" in parts[-1].lower() and ".." not in parts
+
+
 def uninstall(cfg: dict) -> None:
     """Log the server out of Telegram, then delete Phoenix and all its data from the server."""
+    if not safe_remote_dir(cfg["remote_dir"]):
+        raise Failed(f"refusing to delete {cfg['remote_dir']!r}: it doesn't look like Phoenix's own folder")
     ssh(cfg, "docker compose stop && docker compose run --rm -T phoenix python -m phoenix.logout")
     r = ssh(cfg, f"docker compose down --rmi all; cd / && rm -rf {shlex.quote(cfg['remote_dir'])}")
     if r.returncode:
@@ -287,6 +328,27 @@ def unmount(mp: Path) -> bool:
 
 
 @contextlib.contextmanager
+def _vault_user():
+    """A shared lock held while this process uses the vault, so only the last Phoenix window locks it."""
+    import fcntl
+
+    CACHE.mkdir(parents=True, exist_ok=True)
+    with open(CACHE / "vault.lock", "a+") as lock:
+        fcntl.flock(lock, fcntl.LOCK_SH)
+        yield lock
+
+
+def _last_user(lock) -> bool:
+    import fcntl
+
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)  # succeeds only if no other window holds the vault
+        return True
+    except BlockingIOError:
+        return False
+
+
+@contextlib.contextmanager
 def packages_root(cfg: dict, *, lock_existing: bool = False):
     """Yields the folder with plaintext packages; unlocks (and re-locks) the vault if it's enabled."""
     if not vault_enabled():
@@ -296,22 +358,22 @@ def packages_root(cfg: dict, *, lock_existing: bool = False):
         return
     need("gocryptfs")
     mp = mountpoint()
-    if os.path.ismount(mp):  # already unlocked: by another phoenix window, or left over
+    with _vault_user() as lock:
+        mounted_here = not os.path.ismount(mp)  # otherwise: another Phoenix window, or left over
+        if mounted_here:
+            mp.mkdir(mode=0o700, exist_ok=True)
+            print("🔐 Vault password:")
+            if subprocess.run(["gocryptfs", "-q", str(VAULT), str(mp)]).returncode:
+                mp.rmdir()
+                raise Failed("could not unlock the vault (wrong password?)")
         try:
             yield mp
         finally:
-            if lock_existing:
-                unmount(mp)
-        return
-    mp.mkdir(mode=0o700, exist_ok=True)
-    print("🔐 Vault password:")
-    if subprocess.run(["gocryptfs", "-q", str(VAULT), str(mp)]).returncode:
-        mp.rmdir()
-        raise Failed("could not unlock the vault (wrong password?)")
-    try:
-        yield mp
-    finally:
-        unmount(mp)
+            if mounted_here or lock_existing:
+                if _last_user(lock):
+                    unmount(mp)
+                else:
+                    print("🔓 The vault stays open: another Phoenix window is still using it.")
 
 
 def vault_init(cfg: dict) -> None:

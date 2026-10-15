@@ -9,6 +9,7 @@ import shutil
 import subprocess
 from datetime import date
 from pathlib import Path
+from zoneinfo import available_timezones
 
 from phoenix import PROTOCOL
 from phoenix.durations import fmt
@@ -56,6 +57,16 @@ def local_timezone() -> str:
 
 class Restart(Exception):
     """Phoenix on this computer was updated: start the menu again with the new code."""
+
+
+def find_time_zones(text: str) -> list[str]:
+    """Time zones matching what was typed: "kyiv" → Europe/Kyiv; "new york" → America/New_York."""
+    wanted = text.strip().lower().replace(" ", "_")
+    if not wanted:
+        return []
+    zones = sorted(z for z in available_timezones() if "/" in z and not z.startswith(("Etc/", "SystemV/")))
+    exact = [z for z in zones if z.lower() == wanted or z.lower().rsplit("/", 1)[-1] == wanted]
+    return exact or [z for z in zones if wanted in z.lower()]
 
 
 def open_folder(path: Path) -> None:
@@ -142,6 +153,10 @@ class App:
             ui.pause()
         except KeyboardInterrupt:
             ui.note("(cancelled)")
+        except Exception as e:  # never lose the whole menu (and leave the vault open) over one action
+            print(f"\n❌ Unexpected error: {type(e).__name__}: {e}\n"
+                  "Please report it: https://github.com/Skerpsh/Phoenix/issues")
+            ui.pause()
 
     def refresh(self) -> None:
         try:
@@ -180,6 +195,8 @@ class App:
             health = {True: "✅", False: "⚠️"}.get(s["health_ok"], "…")
             who = (s["health_text"] or "not checked yet").split(";")[0]
             lines.append(f"Telegram {health} {who} · {s['packages']} package(s) on the server")
+            for problem in s.get("problems", []):
+                lines.append(f"{YELLOW}⚠️ {problem}{RESET}")
             if not s["paid_until"]:
                 lines.append(f"{DIM}💳 Tip: set the hosting paid-until date (Server), to get reminders{RESET}")
         if self._root is not None and pk.recipient_dirs(self._root) and not pk.is_uploaded(self._root):
@@ -226,7 +243,7 @@ class App:
         host = ui.ask("Server IP address", cfg.get("server", "").removeprefix("root@"))
         if not host:
             raise Failed("no address entered")
-        cfg["server"] = host if "@" in host else f"root@{host}"
+        cfg["server"] = core.ssh_target(host)
         cfg.setdefault("remote_dir", "/opt/phoenix")
         cfg.setdefault("packages_dir", str(core.DEFAULT_PACKAGES))
         core.save_config(cfg)
@@ -285,7 +302,7 @@ class App:
                 break
             print("  api_hash is 32 characters of 0-9 and a-f.")
         print(f"\n{BOLD}4/4 · Your time zone{RESET}: for letters sent on a date.")
-        tz = ui.ask("Time zone", old.get("TIMEZONE") or local_timezone())
+        tz = self.ask_time_zone(old.get("TIMEZONE") or local_timezone())
         ui.explain("\nOptional: a free check at https://healthchecks.io (period 5 minutes) emails you if the server\n"
                    "goes down. Paste its ping URL, or press Enter to skip.")
         heartbeat = ui.ask("Heartbeat URL", old.get("HEARTBEAT_URL", ""), clearable=True)
@@ -528,7 +545,8 @@ class App:
                     ui.note(self.ctl("activity", "off" if data["activity"] else "on"))
                     continue
                 name, label = TIMERS[idx]
-                ui.explain(data["settings"][name]["help"].capitalize() + ".")
+                help_text = data["settings"][name]["help"]
+                ui.explain(help_text[:1].upper() + help_text[1:] + ".")
                 seconds = ui.ask_duration(label, st[name], required=True)
                 ui.note(self.ctl("set", name, pk.dur_str(seconds)))
             except Failed as e:
@@ -728,6 +746,7 @@ class App:
             ("🔄 Restart Phoenix", self.restart),
             ("📜 Live server logs (Ctrl+C to stop)", lambda: core.follow_logs(self.cfg)),
             ("💳 Hosting paid until…", self.paid_until),
+            ("🕐 Time zone (for letters sent on a date)", self.time_zone),
             ("🔑 Change the bot token or Telegram API keys", lambda: self.step_keys(restart=True) or ui.pause()),
             ("📱 Log in to Telegram again", self.relogin),
             ("🛠 Prepare the server again (updates, firewall)", lambda: core.bootstrap(self.cfg) or ui.pause()),
@@ -740,6 +759,44 @@ class App:
                 return
             self.run(actions[idx][1])
             self.refresh()
+
+    def ask_time_zone(self, current: str) -> str:
+        """Pick a time zone: keep the current one, take this computer's, or search by city. Returns the choice."""
+        local = local_timezone()
+        options = [(f"Keep {current}", current)]
+        if local != current:
+            options.append((f"Use this computer's time zone: {local}", local))
+        options.append(("Search by city or name…", None))
+        idx = ui.select("Which time zone? Letters set for a date are sent at that time in this zone.",
+                        [label for label, _ in options], back=None)
+        if options[idx][1]:
+            return options[idx][1]
+        while True:
+            raw = ui.ask("City or zone, e.g. Kyiv, Berlin, New York (Enter to keep the current one)")
+            if not raw:
+                return current
+            matches = find_time_zones(raw)
+            if len(matches) == 1:
+                print(f"  ↳ {matches[0]}")
+                return matches[0]
+            if not matches:
+                print("  Nothing found. Try the nearest big city in your time zone, e.g. Kyiv, Warsaw, London.")
+            elif len(matches) > 12:
+                print(f"  {len(matches)} matches; be more specific (e.g. a city instead of a region).")
+            else:
+                pick = ui.select("Which one?", matches, back="Search again")
+                if pick is not None:
+                    return matches[pick]
+
+    def time_zone(self) -> None:
+        current = core.read_env(self.cfg).get("TIMEZONE") or "Europe/Kyiv"
+        tz = self.ask_time_zone(current)
+        if tz == current:
+            ui.note(f"🕐 Time zone unchanged: {tz}.")
+            return
+        core.set_env_value(self.cfg, "TIMEZONE", tz)
+        core.restart(self.cfg)
+        ui.note(f"🕐 Time zone set to {tz}. Phoenix restarted with it.")
 
     def full_status(self) -> None:
         print(self.ctl("status"))
@@ -772,16 +829,42 @@ class App:
         ui.note(self.ctl("paiduntil", paid.isoformat()))
 
     def move(self) -> None:
-        if not ui.confirm("Set Phoenix up on a new server? The old server keeps running until you cancel it at your host.",
-                          yes="🚚 Yes, set up a new server"):
+        old = dict(self.cfg)
+        if not ui.confirm(f"Move Phoenix from {old['server']} to a new server? The old one is stopped first, so the "
+                          "two never run at the same time: they would share your bot, and the old one could miss your "
+                          "check-ins and deliver by mistake.", yes="🚚 Yes, move it"):
             return
+        print(f"Stopping Phoenix on {old['server']}…")
+        if not core.stop(old):
+            if not ui.confirm(f"⚠️ {old['server']} can't be reached, so it couldn't be stopped. If it comes back while "
+                              "the new server runs, both will watch your bot and the old one may deliver by mistake. "
+                              "Delete it at your hosting provider. Continue anyway?", yes="Continue", no="Cancel"):
+                return
         self.cfg["setup"] = []
         self.cfg.pop("public_key", None)
         core.save_config(self.cfg)
-        if self.setup():
-            print("Uploading your packages to the new server…")
-            pk.push_from(self.cfg, self.root())
-            ui.pause()
+        if not self.setup():
+            if ui.confirm(f"The move isn't finished. Go back to the old server {old['server']} and start Phoenix "
+                          "there again?", yes="Yes, go back", no="No, I'll finish the move later", default=True):
+                self.cfg.clear()
+                self.cfg.update(old)
+                core.save_config(self.cfg)
+                core.restart(self.cfg)
+                ui.note(f"🔄 Back on {old['server']}; Phoenix runs there again.")
+            return
+        print("Uploading your packages to the new server…")
+        pk.push_from(self.cfg, self.root())
+        if old.get("server") != self.cfg.get("server") and ui.confirm(
+            f"Done. Remove Phoenix from the old server {old['server']} now? It logs out of your Telegram account "
+            "there and deletes your packages, keys and settings on it.", yes="🧹 Yes, remove it", no="Not now",
+            default=True,
+        ):
+            try:
+                core.uninstall(old)
+                print(f"✅ Removed from {old['server']}. You can cancel that server at your hosting provider.")
+            except Failed as e:
+                print(f"⚠️ Could not remove it ({e}). It's stopped; delete it at your hosting provider.")
+        ui.pause()
 
     def uninstall(self) -> None:
         if not ui.confirm(f"Remove Phoenix from {self.cfg['server']}? It logs out of your Telegram account and deletes "

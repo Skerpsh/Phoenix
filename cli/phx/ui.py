@@ -17,7 +17,7 @@ from urllib.parse import unquote
 from phoenix import durations
 
 from . import art
-from .packages import TRIGGERS, dur_str
+from .packages import TRIGGERS, dur_str, is_junk
 
 INTERACTIVE = sys.stdin.isatty() and sys.stdout.isatty()
 COLOR = INTERACTIVE and "NO_COLOR" not in os.environ and os.environ.get("TERM") != "dumb"
@@ -480,7 +480,8 @@ def ask_paths(question: str) -> list[Path]:
     for part in parts:
         p = Path(unquote(part.removeprefix("file://"))).expanduser()
         if p.is_dir():
-            paths += sorted(f for f in p.rglob("*") if f.is_file())
+            paths += sorted(f for f in p.rglob("*") if f.is_file() and not is_junk(f)
+                            and not any(part.startswith(".") for part in f.relative_to(p).parts))
         elif p.is_file():
             paths.append(p)
         else:
