@@ -10,6 +10,7 @@ import secrets
 from .db import Store
 
 DEFAULT_DELAY = 3600
+MAX_DELAY = 7 * 86400
 
 
 def normalize(text: str) -> str:

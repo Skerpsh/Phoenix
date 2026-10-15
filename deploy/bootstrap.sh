@@ -6,10 +6,13 @@ set -euo pipefail
 REMOTE_DIR="${1:-/opt/phoenix}"
 export DEBIAN_FRONTEND=noninteractive
 
+# Never stop to ask: keep existing config files when a package update ships a new one.
+APT=(apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
+
 echo "==> Updating system"
-apt-get update -y
-apt-get upgrade -y
-apt-get install -y ca-certificates curl rsync ufw unattended-upgrades fail2ban
+"${APT[@]}" update
+"${APT[@]}" upgrade
+"${APT[@]}" install ca-certificates curl rsync ufw unattended-upgrades fail2ban
 
 echo "==> Automatic security updates"
 cat > /etc/apt/apt.conf.d/20auto-upgrades <<'EOF'
@@ -21,14 +24,18 @@ if ! command -v docker >/dev/null; then
     echo "==> Installing Docker"
     if ! curl -fsSL https://get.docker.com | sh; then
         echo "==> Docker's script doesn't support this release yet, using Ubuntu's packages"
-        apt-get install -y docker.io docker-compose-v2
+        "${APT[@]}" install docker.io docker-compose-v2
     fi
 fi
 systemctl enable --now docker
 docker compose version
 
 echo "==> Firewall: allow SSH (existing rules are kept; Phoenix itself needs no open ports)"
-ufw allow OpenSSH
+# Allow the port(s) sshd really listens on, so a server with SSH on a custom port doesn't lock you out.
+SSH_PORTS="$(sshd -T 2>/dev/null | awk '$1 == "port" { print $2 }' | sort -u)"
+for port in ${SSH_PORTS:-22}; do
+    ufw allow "$port/tcp"
+done
 ufw --force enable
 
 # The account you log in with (also when this runs through sudo as a normal user).

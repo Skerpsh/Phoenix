@@ -50,6 +50,7 @@ class Engine:
         self._loaded: Loaded | None = None
         self._loaded_sig: str | None = None
         self._requests: asyncio.Task | None = None
+        self._maintenance: asyncio.Task | None = None
 
     async def notify(self, text: str, keyboard: str | None = None) -> None:
         """Message the owner, except during a silent alarm: then the bot must look as if nothing happened."""
@@ -68,7 +69,9 @@ class Engine:
         return self._task is not None and not self._task.done()
 
     def status(self) -> str:
-        return state.status_text(self.store, len(package_dirs(self.cfg.packages_dir)))
+        text = state.status_text(self.store, len(package_dirs(self.cfg.packages_dir)))
+        problem = self.cfg.timezone_problem
+        return f"{text}\n⚠️ {problem}" if problem else text
 
     def _load(self) -> Loaded:
         sig = signature(self.cfg.packages_dir)
@@ -203,6 +206,8 @@ class Engine:
                 ok, label = await self._resolve(p.hid, p.telegram)
                 lines.append(f"    {'✅' if ok else '❌'} post to {label if ok else p.telegram + ' not found'}")
         lines += [f"❌ {e}" for e in loaded.errors]
+        if self.cfg.timezone_problem:
+            lines.append(f"⚠️ {self.cfg.timezone_problem}")
         return "\n".join(lines)
 
     async def _resolve(self, key: str, ref: str) -> tuple[bool, str]:
@@ -270,21 +275,39 @@ class Engine:
             await self.notify("🔥 Phoenix is armed.\n\n" + self.status(), keyboard="checkin")
         else:
             await self.notify("🔄 Phoenix restarted.\n\n" + self.status())
+        if self.cfg.timezone_problem:
+            self.store.log("settings", self.cfg.timezone_problem)
+        # Three independent loops: Telegram may make a maintenance call wait for hours (flood limits),
+        # but the switch itself must keep ticking no matter what.
         self._requests = asyncio.create_task(self._serve_requests())
+        self._maintenance = asyncio.create_task(self._forever(self._maintenance_tick))
+        await self._forever(self._switch_tick)
+
+    @staticmethod
+    async def _forever(step) -> None:
         while True:
-            try:
-                await self.tick()
-            except Exception:
-                log.exception("tick failed")
+            await step()
             await asyncio.sleep(TICK)
 
+    async def _guarded(self, *steps) -> None:
+        for step in steps:
+            try:
+                await step()
+            except Exception:
+                log.exception("%s failed", step.__name__)
+
+    async def _switch_tick(self) -> None:
+        """The switch: check-ins, escalation, triggers and delivery come first, every minute."""
+        await self._guarded(self._evaluate, self._heartbeat, self._check_billing, self._check_review)
+
+    async def _maintenance_tick(self) -> None:
+        """Talks to Telegram, so it may be slow: account health and the recipient check after an upload."""
+        await self._guarded(self._check_health, self._check_packages)
+
     async def tick(self) -> None:
-        await self._heartbeat()
-        await self._check_health()
-        await self._check_packages()
-        await self._check_billing()
-        await self._check_review()
-        await self._evaluate()
+        """One round of everything (tests call this)."""
+        await self._maintenance_tick()
+        await self._switch_tick()
 
     async def _evaluate(self) -> None:
         s = self.store

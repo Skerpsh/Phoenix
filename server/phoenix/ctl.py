@@ -11,7 +11,7 @@ import uuid
 from datetime import date
 
 from . import PROTOCOL, config, durations, duress
-from .db import DEFAULT_SETTINGS, SETTING_HELP, Store, settings_error
+from .db import DEFAULT_SETTINGS, MAX_PAUSE, SETTING_HELP, Store, settings_error
 from .durations import fmt
 from .engine import Engine
 from .packages import package_dirs
@@ -20,7 +20,7 @@ from .state import PHASES, activity_enabled, deadline, events_text, panic_due, s
 REQUEST_TIMEOUT = 180
 
 
-def summary(store: Store, packages: int) -> dict:
+def summary(store: Store, packages: int, problems: list[str] = ()) -> dict:
     now = time.time()
     phase = store.get("phase", "armed")
     pause = store.get("pause_until")
@@ -44,6 +44,7 @@ def summary(store: Store, packages: int) -> dict:
         "health_text": store.get("health_text", ""),
         "paid_until": store.get("paid_until"),
         "pkg_updated_ago": now - store.get("pkg_updated_at") if store.get("pkg_updated_at") else None,
+        "problems": list(problems),
     }
 
 
@@ -70,8 +71,17 @@ def main() -> None:
 
     if cmd == "status":
         print(status_text(store, packages, reveal=True))
+        if cfg.timezone_problem:
+            print(f"⚠️ {cfg.timezone_problem}")
     elif cmd == "summary":
-        print(json.dumps(summary(store, packages)))
+        problems = [p for p in [cfg.timezone_problem] if p]
+        if store.get("bot_problem"):
+            problems.append(f"Control bot: {store.get('bot_problem')}. Check-ins only work through your Telegram "
+                            "activity now; fix it: Server → Change the bot token or Telegram API keys.")
+        if time.time() - store.get("bot_conflict_at", 0) < 600:
+            problems.append("Another program is reading your bot (an old Phoenix server?). Remove it, or it may "
+                            "miss your check-ins and deliver by mistake.")
+        print(json.dumps(summary(store, packages, problems)))
     elif cmd == "log":
         print(events_text(store, 50, reveal=True))
     elif cmd == "settings":
@@ -94,6 +104,8 @@ def main() -> None:
         print(f"✅ Check-in recorded. Next one due in {fmt(store.setting('checkin_interval'))}.")
     elif cmd == "pause" and len(args) == 1:
         seconds = durations.parse(args[0])
+        if seconds > MAX_PAUSE:
+            raise SystemExit(f"A pause can be at most {fmt(MAX_PAUSE)}.")
         engine.pause(seconds)
         print(f"⏸ Paused for {fmt(seconds)}. The timer starts again when the pause ends.")
     elif cmd == "resume":
@@ -130,8 +142,8 @@ def main() -> None:
         print("✅ Duress code removed.")
     elif cmd == "duress-delay" and len(args) == 1:
         seconds = durations.parse(args[0])
-        if seconds < 60:
-            raise SystemExit("The minimum is 1 minute.")
+        if not 60 <= seconds <= duress.MAX_DELAY:
+            raise SystemExit(f"Choose between 1 minute and {fmt(duress.MAX_DELAY)}.")
         store.set("duress_delay", seconds)
         print(f"✅ Saved: delivery {fmt(seconds)} after the duress code.")
     elif cmd == "request" and len(args) == 1:

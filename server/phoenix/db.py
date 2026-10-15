@@ -32,10 +32,33 @@ SETTING_HELP = {
 }
 
 
+MAX_SETTINGS = {  # sane upper limits, so no setting can quietly switch Phoenix off
+    "checkin_interval": 60 * D,
+    "button_every": 180 * D,
+    "reminder_every": 7 * D,
+    "alarm_after": 60 * D,
+    "alarm_every": 1 * D,
+    "trigger_after": 90 * D,
+    "alarm_min": 14 * D,
+    "panic_delay": 1 * D,
+    "review_every": 365 * D,
+}
+# Longer values delay delivery: from the bot (a phone someone else may hold) these can only be made shorter.
+DELAYING_SETTINGS = {"checkin_interval", "button_every", "alarm_after", "trigger_after", "alarm_min"}
+MAX_PAUSE_BOT = 30 * D
+MAX_PAUSE = 365 * D
+BOT_ABORT_WINDOW = 2 * D  # after this long, a delivery can be stopped only from the computer
+
+
 def settings_error(values: dict[str, int]) -> str | None:
     """Why this combination of settings makes no sense, or None."""
+    from .durations import fmt
+
     if any(v < 60 for v in values.values()):
         return "The minimum is 1 minute."
+    for name, value in values.items():
+        if value > MAX_SETTINGS.get(name, value):
+            return f"{name} can be at most {fmt(MAX_SETTINGS[name])}."
     if values["trigger_after"] <= values["alarm_after"]:
         return "Delivery (trigger_after) must come later than the alarm (alarm_after)."
     if values["button_every"] < values["checkin_interval"]:

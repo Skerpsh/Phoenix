@@ -1,5 +1,6 @@
 """Owner control bot. It ignores everyone except OWNER_ID; any message from you counts as a check-in."""
 
+import time
 from datetime import date
 
 from aiogram import F, Router
@@ -7,7 +8,14 @@ from aiogram.filters import Command, CommandObject
 from aiogram.types import BotCommand, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from . import durations, duress
-from .db import DEFAULT_SETTINGS, SETTING_HELP, settings_error
+from .db import (
+    BOT_ABORT_WINDOW,
+    DEFAULT_SETTINGS,
+    DELAYING_SETTINGS,
+    MAX_PAUSE_BOT,
+    SETTING_HELP,
+    settings_error,
+)
 from .durations import fmt
 from .engine import Engine
 from .state import events_text, silent
@@ -36,9 +44,9 @@ HELP = """🔥 Phoenix — dead man's switch
 Check in by tapping "✅ I'm OK" or sending any message to this bot. Messages you write anywhere in Telegram count too, but the button is still needed every 30 days. If you stay silent, Phoenix reminds you, escalates to an alarm, and finally delivers each package from your Telegram account to its recipient.
 
 /status — current state and time left
-/pause 30d — going offline (trip, hospital); /resume to end early
+/pause 30d — going offline (trip, hospital), up to 30 days at a time; /resume to end early
 /activity on|off — count your Telegram activity as a check-in
-/settings, /set <name> <duration> — change timings (durations: 30m, 12h, 7d, 2w, 1y, 1d12h)
+/settings, /set <name> <duration> — change timings (durations: 30m, 12h, 7d, 2w, 1y, 1d12h); from here they can only be made shorter
 /verify — check that every recipient can be found
 /test — send everything to your own Saved Messages, exactly as recipients would see it
 /panic — trigger delivery now (with a cancel window); /cancel to stop it
@@ -57,6 +65,27 @@ def review_keyboard() -> InlineKeyboardMarkup:
 
 
 KEYBOARDS = {"checkin": checkin_keyboard, "review": review_keyboard}
+
+
+LATE_STOP = (
+    f"This delivery started more than {fmt(BOT_ABORT_WINDOW)} ago, so it can only be stopped from the menu on your "
+    "computer (phoenix → ⏹ Stop the delivery). This protects your letters if someone else has your phone."
+)
+
+
+def too_late_for_bot(engine: Engine) -> bool:
+    """A live delivery older than the bot's window can be stopped only from the computer."""
+    started = engine.store.get("triggered_at")
+    return (engine.phase in ("triggered", "done") and started is not None
+            and time.time() - started > BOT_ABORT_WINDOW)
+
+
+def bot_set_error(store, name: str, seconds: int) -> str | None:
+    """Why /set may not change this (from a phone someone else might hold), or None."""
+    if name in DELAYING_SETTINGS and seconds > store.setting(name):
+        return (f"From the bot, {name} can only be made shorter. To make it longer, use the menu on your "
+                "computer: phoenix → ⏱ Timers and reminders.")
+    return settings_error({**store.settings(), name: seconds})
 
 
 def next_due_text(engine: Engine) -> str:
@@ -129,7 +158,7 @@ def build_router(engine: Engine, owner_id: int) -> Router:
             await m.answer(str(e))
             return
         s = engine.store
-        error = settings_error({**s.settings(), name: seconds})
+        error = bot_set_error(s, name, seconds)
         if error:
             await m.answer(error)
             return
@@ -143,6 +172,10 @@ def build_router(engine: Engine, owner_id: int) -> Router:
             seconds = durations.parse(command.args or "")
         except ValueError as e:
             await m.answer(f"Usage: /pause 30d\n{e}")
+            return
+        if seconds > MAX_PAUSE_BOT:
+            await m.answer(f"From the bot you can pause for up to {fmt(MAX_PAUSE_BOT)} at a time (send it again to "
+                           "extend). Longer pauses: the menu on your computer, phoenix → ⏸ Pause.")
             return
         engine.pause(seconds)
         await m.answer(f"⏸ Paused for {fmt(seconds)}. The timer restarts when the pause ends. /resume to end early.")
@@ -227,12 +260,18 @@ def build_router(engine: Engine, owner_id: int) -> Router:
         if silent(engine.store):
             await m.answer("Nothing is being delivered.")
             return
+        if too_late_for_bot(engine):
+            await m.answer(LATE_STOP)
+            return
         await m.answer(await engine.abort() or "Nothing is being delivered.")
 
     @r.message(Command("rearm"))
     async def rearm(m: Message):
         if silent(engine.store):
             await m.answer("Phoenix is already armed.")
+            return
+        if too_late_for_bot(engine):
+            await m.answer(LATE_STOP)
             return
         await m.answer(await engine.rearm() or "Phoenix is already armed.")
 

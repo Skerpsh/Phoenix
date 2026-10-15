@@ -9,6 +9,7 @@ from telethon import TelegramClient, errors, events, functions, types
 from .config import Config
 
 MESSAGE_LIMIT = 4000
+TELEGRAM_SERVICE_ID = 777000  # the official "Telegram" account (login codes, notices)
 
 
 class ScheduleRejected(Exception):
@@ -22,14 +23,26 @@ def display_name(entity) -> str:
     return f"{name} (@{username})" if username else name
 
 
+def utf16_len(text: str) -> int:
+    """Telegram measures message length in UTF-16 code units (most emoji count as two)."""
+    return len(text.encode("utf-16-le")) // 2
+
+
+def _fitting_chars(text: str, limit: int) -> int:
+    units = 0
+    for i, ch in enumerate(text):
+        units += 2 if ord(ch) > 0xFFFF else 1
+        if units > limit:
+            return i
+    return len(text)
+
+
 def split_text(text: str, limit: int = MESSAGE_LIMIT) -> list[str]:
+    """Split into messages Telegram accepts, preferably at paragraph, line or word breaks."""
     chunks, rest = [], text.strip()
-    while len(rest) > limit:
-        cut = rest.rfind("\n\n", 0, limit)
-        if cut <= 0:
-            cut = rest.rfind("\n", 0, limit)
-        if cut <= 0:
-            cut = limit
+    while utf16_len(rest) > limit:
+        window = rest[: _fitting_chars(rest, limit)]
+        cut = next((c for c in (window.rfind("\n\n"), window.rfind("\n"), window.rfind(" ")) if c > 0), len(window))
         chunks.append(rest[:cut].strip())
         rest = rest[cut:].strip()
     if rest:
@@ -124,7 +137,8 @@ class Account:
     def on_private_incoming(self, callback: Callable[[int, object], Awaitable[None]]) -> None:
         async def handler(event):
             sender = await event.get_sender()
-            if sender is None or getattr(sender, "bot", False) or getattr(sender, "is_self", False):
+            if (sender is None or getattr(sender, "bot", False) or getattr(sender, "is_self", False)
+                    or getattr(sender, "support", False) or sender.id == TELEGRAM_SERVICE_ID):
                 return
             await callback(sender.id, sender)
 

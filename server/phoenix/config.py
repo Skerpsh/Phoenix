@@ -1,7 +1,10 @@
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -16,7 +19,21 @@ class Config:
 
     @property
     def tz(self) -> ZoneInfo:
-        return ZoneInfo(self.timezone)
+        """Your time zone; an unknown name falls back to UTC, so a typo can never stop a delivery."""
+        try:
+            return ZoneInfo(self.timezone)
+        except (ZoneInfoNotFoundError, ValueError):
+            log.warning("unknown TIMEZONE %r, using UTC", self.timezone)
+            return ZoneInfo("UTC")
+
+    @property
+    def timezone_problem(self) -> str | None:
+        try:
+            ZoneInfo(self.timezone)
+            return None
+        except (ZoneInfoNotFoundError, ValueError):
+            return (f"Unknown time zone {self.timezone!r}: dated letters use UTC instead. On your computer: "
+                    "phoenix → Server → Time zone.")
 
     @property
     def db_path(self) -> Path:
