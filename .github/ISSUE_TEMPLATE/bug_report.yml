@@ -1,0 +1,43 @@
+name: Bug report
+description: Something doesn't work as described
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! **Never paste tokens, API hashes, phone numbers, `.env` contents or anything from your packages.**
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What did you do, what did you expect, and what happened instead? Include the ❌ message if there was one.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. phoenix → Recipients → …
+        2. …
+  - type: textarea
+    id: logs
+    attributes:
+      label: Server logs
+      description: From 🖥 Server → 📜 Live server logs, if relevant. Remove anything personal.
+      render: text
+  - type: input
+    id: computer
+    attributes:
+      label: Your computer
+      placeholder: e.g. Ubuntu 24.04, Python 3.12
+  - type: input
+    id: server
+    attributes:
+      label: Your server
+      placeholder: e.g. Debian 12 at Hetzner, logged in as root
+  - type: input
+    id: version
+    attributes:
+      label: Phoenix version
+      description: "`git -C ~/.local/share/phoenix/app log -1 --format=%h` or the date you installed/updated"
