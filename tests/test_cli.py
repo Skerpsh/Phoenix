@@ -117,14 +117,35 @@ cd {ROOT / "server"} && sh -c "$cmd"
         "", "",                      # back, back
         "3", "1", "Bye", "", "", "",  # account → auto-reply → back
         "4", "",                     # upload
-        "10", "",                    # history
-        "13",                        # quit
+        "11", "",                    # history
+        "14",                        # quit
     ]
     r = subprocess.run([sys.executable, str(ROOT / "cli" / "phoenix")], input="\n".join(answers) + "\n",
                        env=env, capture_output=True, text=True, timeout=120)
     out = r.stdout + r.stderr
     assert r.returncode == 0, out
     for expected in ["Check-in recorded", "Saved: 5d", "Paused for 14d", "Pause ended", "Added Mom",
-                     "Message saved", '"Bye"', "Uploaded", "check-in from the CLI", "Bye! Phoenix"]:
+                     "Message saved", '"Bye"', "Uploaded", "check-in from the CLI"]:
         assert expected in out, f"{expected!r} missing in:\n{out}"
+    from phx import art
+    assert any(phrase in out for phrase in art.FAREWELLS), "a farewell phrase on the way out"
     assert (home / "packages" / "Mom" / "01-message.txt").read_text() == "Hi mom\n"
+
+
+def test_legacy_vault_moves_out_of_the_code(tmp_path, monkeypatch):
+    from phx import core
+
+    code, data = tmp_path / "code", tmp_path / "data"
+    (code / "vault").mkdir(parents=True)
+    (code / "vault" / "gocryptfs.conf").write_text("{}")
+    (code / "vault" / "encrypted-file").write_text("x")
+    monkeypatch.delenv("PHOENIX_VAULT")
+    monkeypatch.setattr(core, "ROOT", code)
+    monkeypatch.setattr(core, "DATA", data)
+    monkeypatch.setattr(core, "VAULT", code / "vault")
+    monkeypatch.setattr(core, "mountpoint", lambda: tmp_path / "not-mounted")
+
+    assert "moved" in core.migrate_vault()
+    assert not (code / "vault").exists()
+    assert (data / "vault" / "encrypted-file").read_text() == "x" and core.VAULT == data / "vault"
+    assert core.migrate_vault() is None, "nothing to do the second time"

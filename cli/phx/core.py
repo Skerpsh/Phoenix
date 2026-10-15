@@ -150,9 +150,9 @@ def public_ssh_key() -> Path | None:
     return None
 
 
-def ctl(cfg: dict, *args: str) -> str:
+def ctl(cfg: dict, *args: str, input: str | None = None) -> str:
     """Run a server-side command (phoenix/ctl.py) inside the running service."""
-    r = ssh(cfg, "docker compose exec -T phoenix python -m phoenix.ctl " + shlex.join(args), capture=True)
+    r = ssh(cfg, "docker compose exec -T phoenix python -m phoenix.ctl " + shlex.join(args), capture=True, input=input)
     if r.returncode:
         text = (r.stderr.strip() or r.stdout.strip()).splitlines()
         message = text[-1] if text else "the server did not answer"
@@ -252,6 +252,20 @@ def update_code() -> bool:
 
 
 # ---------------------------------------------------------------------------- vault
+def migrate_vault() -> str | None:
+    """Move a vault kept next to the code (older versions) to the data folder, so updating or
+    deleting the code can never take your packages with it. Returns a message if it moved."""
+    global VAULT
+    legacy, target = ROOT / "vault", DATA / "vault"
+    if (os.environ.get("PHOENIX_VAULT") or VAULT != legacy or not (legacy / "gocryptfs.conf").exists()
+            or target.exists() or os.path.ismount(mountpoint())):
+        return None
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(legacy), str(target))
+    VAULT = target
+    return f"🔐 Your vault moved out of the code folder, to {target}. Nothing else changes."
+
+
 def vault_enabled() -> bool:
     return (VAULT / "gocryptfs.conf").exists()
 

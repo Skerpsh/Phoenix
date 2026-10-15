@@ -16,7 +16,9 @@ from phoenix.durations import fmt
 from . import core, ui
 from . import packages as pk
 from .core import Failed
-from .ui import BOLD, DIM, ON_LABELS, RESET
+from .ui import BOLD, DIM, FLAME, GREEN, ON_LABELS, RED, RESET, YELLOW
+
+PHASE_COLORS = {"armed": GREEN, "overdue": YELLOW, "alarm": RED, "triggered": FLAME, "done": DIM}
 
 STEPS = [
     ("server", "Connect to your server"),
@@ -156,29 +158,32 @@ class App:
             self.summary, self.summary_error = None, "The server sent an unexpected answer (Server → Update Phoenix)."
 
     def header(self) -> str:
-        lines = [f"{BOLD}🔥 Phoenix{RESET}  {DIM}{self.cfg.get('server', '')}{RESET}"]
+        lines = [f"{FLAME}{BOLD}P H O E N I X{RESET}   {DIM}{self.cfg.get('server', '')}{RESET}", ""]
         s = self.summary
         if self.summary_error:
-            lines.append(f"⚠️ {self.summary_error}")
+            lines.append(f"{YELLOW}⚠️ {self.summary_error}{RESET}")
         if s:
-            state = s["phase_label"]
+            state = f"{PHASE_COLORS.get(s['phase'], '')}{BOLD}{s['phase_label']}{RESET}"
             if s["paused_for"]:
                 state += f" · ⏸ paused for another {fmt(s['paused_for'])}"
             elif s["due_in"] is not None:
                 due = s["due_in"]
-                state += f" · next check-in in {fmt(due)}" if due > 0 else f" · ⚠️ check-in overdue by {fmt(-due)}"
+                state += f" · next check-in in {fmt(due)}" if due > 0 else f" · {YELLOW}check-in overdue by {fmt(-due)}{RESET}"
             lines.append(state)
-            if s["panic_pending"]:
-                lines.append(f"🚨 Panic pending: delivery in {fmt(s['eta_in'])}")
+            if s.get("silent"):
+                when = f"delivery in {fmt(s['panic_in'])}" if s.get("panic_in") else "delivering"
+                lines.append(f"{RED}{BOLD}🤫 Silent alarm is on: {when}{RESET} {DIM}(the bot shows a normal status){RESET}")
+            elif s["panic_pending"]:
+                lines.append(f"{RED}{BOLD}🚨 Panic pending: delivery in {fmt(s.get('panic_in') or s['eta_in'])}{RESET}")
             elif s["eta_in"] is not None:
                 lines.append(f"{DIM}If you stay silent, delivery starts in {fmt(s['eta_in'])}{RESET}")
             health = {True: "✅", False: "⚠️"}.get(s["health_ok"], "…")
-            lines.append(f"Telegram: {health} {s['health_text'] or 'not checked yet'}")
-            lines.append(f"Packages on the server: {s['packages']}")
+            who = (s["health_text"] or "not checked yet").split(";")[0]
+            lines.append(f"Telegram {health} {who} · {s['packages']} package(s) on the server")
             if not s["paid_until"]:
-                lines.append(f"{DIM}💳 Tip: set the hosting paid-until date in Server, to get reminders{RESET}")
+                lines.append(f"{DIM}💳 Tip: set the hosting paid-until date (Server), to get reminders{RESET}")
         if self._root is not None and pk.recipient_dirs(self._root) and not pk.is_uploaded(self._root):
-            lines.append("⬆️ You have changes that are not on the server yet")
+            lines.append(f"{YELLOW}⬆️ You have changes that are not on the server yet{RESET}")
         return "\n".join(lines)
 
     # --------------------------------------------------------------------- setup
@@ -357,10 +362,12 @@ class App:
             elif phase == "done":
                 items.append(("🔁 Arm Phoenix again", self.rearm))
             elif s.get("panic_pending"):
-                items.append(("✋ Cancel the panic", self.cancel_panic))
+                label = "✋ Cancel the silent alarm" if s.get("silent") else "✋ Cancel the panic"
+                items.append((label, self.cancel_panic))
             else:
                 items.append(("🚨 Panic button", self.panic))
             items += [
+                ("🤫 Duress code: a silent alarm", self.duress),
                 ("📜 History", self.history),
                 ("🖥 Server", self.server),
                 ("🔐 Vault on this computer", self.vault),
@@ -441,6 +448,59 @@ class App:
     def rearm(self) -> None:
         if ui.confirm("Arm Phoenix again? Messages still scheduled in Telegram are cancelled.", yes="🔁 Yes", no="No"):
             ui.note(self.ctl("request", "rearm"))
+
+    def duress(self) -> None:
+        while True:
+            self.refresh()
+            s = self.summary or {}
+            if "duress_set" not in s:
+                raise Failed("the server runs an older Phoenix: choose Server → Update Phoenix first")
+            delay = fmt(s["duress_delay"])
+            header = "\n".join([
+                f"{BOLD}🤫 Duress code: a silent alarm{RESET}",
+                "",
+                "If someone forces you to check in, send this phrase to your bot instead of a normal message. "
+                f"The bot answers exactly like a normal check-in, and Phoenix quietly starts the panic delivery {delay} later.",
+                "",
+                "Until you stop it here, the bot keeps showing a normal status, sends no alerts, and pretends "
+                "/cancel and /abort have nothing to stop. Only this menu, on this computer, can stop it.",
+                "",
+                f"{DIM}Packages and account actions set to run “on panic” are sent. "
+                f"Pick a phrase you'd never type by accident.{RESET}",
+                "",
+                f"Code: {GREEN + '✅ set' if s['duress_set'] else YELLOW + 'not set'}{RESET}"
+                + (f"   {RED}{BOLD}🤫 a silent alarm is on now{RESET}" if s.get("silent") else ""),
+            ])
+            options = [("🔑 Set a new code" if s["duress_set"] else "🔑 Set the code", self.set_duress),
+                       (f"⏱ Delay before delivery: {delay}", self.duress_delay)]
+            if s["duress_set"]:
+                options.append(("🗑 Remove the code", self.clear_duress))
+            idx = ui.select("What next?", [label for label, _ in options], header=header)
+            if idx is None:
+                return
+            self.run(options[idx][1])
+
+    def set_duress(self) -> None:
+        ui.explain("Type the phrase you'd send to the bot under duress, e.g. “all good, talk later”.\n"
+                   "It's hidden while you type, and the server stores only a fingerprint of it.")
+        phrase = ui.ask_secret("Duress code")
+        if not phrase:
+            return
+        if phrase.startswith("/"):
+            raise Failed("the code can't start with “/”: the bot would treat it as a command")
+        if ui.ask_secret("Type it again") != phrase:
+            raise Failed("the two codes don't match, nothing was changed")
+        ui.note(self.ctl("duress-set", input=phrase))
+
+    def duress_delay(self) -> None:
+        ui.explain("Time for whoever forced you to leave, before your packages start going out.")
+        seconds = ui.ask_duration("Delivery starts this long after the code (e.g. 30m, 1h, 6h)",
+                                  (self.summary or {}).get("duress_delay", 3600), required=True)
+        ui.note(self.ctl("duress-delay", pk.dur_str(seconds)))
+
+    def clear_duress(self) -> None:
+        if ui.confirm("Remove the duress code?", yes="🗑 Remove it"):
+            ui.note(self.ctl("duress-clear"))
 
     def history(self) -> None:
         print(self.ctl("log"))

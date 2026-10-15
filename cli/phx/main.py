@@ -2,10 +2,11 @@
 
 import argparse
 import os
+import random
 import signal
 import sys
 
-from . import core, ui
+from . import art, core, ui
 from . import packages as pk
 from .core import Failed
 from .screens import App, Restart
@@ -19,6 +20,12 @@ def on_hangup(signum, frame) -> None:
 
 def menu(a) -> None:
     core.need(*core.REQUIRED_TOOLS)
+    if not ui.ensure_size():
+        return
+    moved = core.migrate_vault()
+    ui.splash()
+    if moved:
+        ui.note(moved)
     app = App(core.load_config())
     restart = False
     try:
@@ -30,12 +37,10 @@ def menu(a) -> None:
         restart = True
     finally:
         app.close()
-        ui.clear()
-        if core.vault_enabled():
-            print("🔒 Vault locked.")
     if restart:
         os.execv(sys.executable, [sys.executable, str(core.ROOT / "cli" / "phoenix")])
-    print("Bye! Phoenix keeps watching on the server.")
+    locked = "\n🔒 Your vault is locked." if core.vault_enabled() else ""
+    ui.farewell(f"{random.choice(art.FAREWELLS)}{locked}")
 
 
 def push(a) -> None:
