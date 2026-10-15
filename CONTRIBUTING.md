@@ -24,6 +24,8 @@ The tests run everything in a throwaway home directory (`tests/conftest.py`), so
 
 - **`tests/test_engine.py`:** the full life of a switch against a fake Telegram account with a fast-forwarded clock: check-ins, escalation, both triggers, scheduling, backups, auto-reply, abort, the rehearsal, and requests from the CLI.
 - **`tests/test_cli.py`:** package checks, the encrypted upload, and the whole menu driven with typed answers, where `ssh`/`rsync` are stubs that run the server side locally.
+- **`tests/test_duress.py`:** the duress code and the silent alarm.
+- **`tests/test_fixes.py`:** one regression test per problem found in the security and reliability audit.
 
 To try your changes on a real server, use a test Telegram account and a throwaway VPS. Run the CLI from your checkout (`./cli/phoenix`); it uploads the server code from the same checkout.
 

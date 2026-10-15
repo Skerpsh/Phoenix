@@ -149,7 +149,7 @@ Items are sent in the order shown in the list.
 | Ask me to review my packages every | 90d | "are your packages still up to date?" | `review_every` |
 | Telegram activity counts as a check-in | on | messages you send anywhere count | `/activity` |
 
-With the defaults, delivery happens after **21 days** of total silence. Pick values that fit your life: a long hospital stay or a trip without internet shouldn't trigger it. That's what the pause is for, too.
+With the defaults, delivery happens after **21 days** of total silence. Every timer has a sensible upper limit (delivery at most 90 days after a missed check-in, for example), so no setting can switch Phoenix off by accident. Pick values that fit your life: a long hospital stay or a trip without internet shouldn't trigger it. That's what the pause is for, too.
 
 ## Pause, panic, stop
 
@@ -172,7 +172,7 @@ If someone ever forces you to check in, or to stop a delivery, the duress code l
 What happens:
 
 - The bot answers **exactly** as it does to any ordinary message, so whoever is watching sees nothing unusual.
-- Phoenix quietly starts the **panic delivery** after the duress delay (default **1 hour**, changeable in the same screen), giving them time to leave.
+- Phoenix quietly starts the **panic delivery** after the duress delay (default **1 hour**, up to 7 days, changeable in the same screen), giving them time to leave.
 - Until you stop it, the bot keeps up appearances: `/status` and `/log` look normal, no alerts are sent, and `/cancel`, `/abort` and `/rearm` pretend there's nothing to stop.
 - **Only the menu on your computer** shows the silent alarm and can stop it: ✋ Cancel the silent alarm before delivery, ⏹ Stop the delivery while it runs, or 🔁 Arm Phoenix again afterwards.
 
@@ -190,17 +190,23 @@ Day to day you can do everything from Telegram. The bot ignores everyone except 
 |---|---|
 | "✅ I'm OK", `/checkin`, or any message | check in |
 | `/status` | state, time left, Telegram session, hosting |
-| `/pause 14d`, `/resume` | pause / end the pause |
+| `/pause 14d`, `/resume` | pause (up to 30 days at a time) / end the pause |
 | `/panic`, `/cancel` | panic (asks to confirm) / cancel it |
-| `/abort` | stop a delivery or a rehearsal |
-| `/rearm` | arm again after a delivery |
+| `/abort` | stop a delivery (within 2 days of its start) or a rehearsal |
+| `/rearm` | arm again after a delivery (within 2 days of its start) |
 | `/test` | rehearsal |
 | `/verify` | check that every person can be found |
-| `/settings`, `/set <name> <duration>` | show / change timers, e.g. `/set checkin_interval 5d` |
+| `/settings`, `/set <name> <duration>` | show / change timers, e.g. `/set checkin_interval 5d` (see below) |
 | `/activity on` or `/activity off` | count your Telegram activity as a check-in |
 | `/paiduntil 2027-10-01` | hosting paid-until date, for reminders |
 | `/log` | recent events |
 | `/help` | help |
+
+**What the bot can't do.** Someone else might one day hold your phone: someone who wants your letters not to arrive, say. So a few things that would quietly switch Phoenix off work only from the menu on your computer, which needs your SSH key:
+
+- making the timers that delay delivery **longer** (the bot can only make them shorter);
+- pausing for more than 30 days at a time;
+- stopping a delivery, or arming again, more than 2 days after it started. A false alarm is preceded by a week of reminders, so you'd notice it within those 2 days.
 
 ## The server menu
 
@@ -213,10 +219,11 @@ Day to day you can do everything from Telegram. The bot ignores everyone except 
 | 🔄 Restart Phoenix | if the bot doesn't answer |
 | 📜 Live server logs | to see what's happening; Ctrl+C to stop |
 | 💳 Hosting paid until… | after you renew your server |
-| 🔑 Change the bot token or Telegram API keys | a new bot, new keys, another time zone, a heartbeat URL |
+| 🕐 Time zone | you moved, or dated letters should follow another zone: pick this computer's zone or search by city |
+| 🔑 Change the bot token or Telegram API keys | a new bot, new keys, a heartbeat URL |
 | 📱 Log in to Telegram again | the bot reports "Telegram account problem" |
 | 🛠 Prepare the server again | re-run step 2 of the setup (safe to repeat) |
-| 🚚 Move Phoenix to another server | set up a new server and upload your packages to it |
+| 🚚 Move Phoenix to another server | stops Phoenix on the old server first, sets up the new one, uploads your packages, then offers to remove it from the old server |
 | 🧹 Remove Phoenix from this server | see [Uninstalling](#uninstalling) |
 
 ## Updating Phoenix

@@ -6,21 +6,23 @@ Phoenix has to do something unusual: **act on your behalf when you can't.** That
 
 | Threat | Protection |
 |---|---|
-| Someone reads your packages on the server's disk, in hosting backups, or in transit | Packages are encrypted **on your computer** with the server's [age](https://github.com/FiloSottile/age) public key and stored under hashed names. Recipient names, file names and contents aren't visible. Upload goes over SSH. |
+| Someone gets hold of the uploaded package files, or watches the upload | Packages are encrypted **on your computer** with the server's [age](https://github.com/FiloSottile/age) public key; upload goes over SSH. Folder and file names on the server are hashed with a secret that stays on your computer, so the package files alone reveal neither who receives them nor what they are. |
 | Someone reads your packages on your computer | The [gocryptfs](https://github.com/rfjakob/gocryptfs) vault keeps them encrypted; they're readable only while the Phoenix menu (or `phoenix push`) runs, and the vault locks when the menu exits, even if the terminal is closed. |
 | Someone attacks the server over the network | Nothing listens except SSH, with password login switched off and fail2ban on. The firewall is enabled and security updates are installed automatically. |
 | Someone else uses your control bot | The bot ignores everyone except your Telegram user id. |
 | Someone who has your phone keeps postponing delivery just by using Telegram | Telegram activity alone isn't enough: an explicit check-in is required at least every 30 days (`button_every`). |
+| Someone who has your phone switches Phoenix off through the bot | The bot can only make the delaying timers shorter and pause for 30 days at a time, and it can stop a delivery only within 2 days of its start. Everything beyond that needs the menu on your computer (your SSH key). All timers have upper limits. |
+| An old server keeps running after a move | Moving stops the old server first; if two programs ever read your bot at once, Phoenix warns you in the bot and in the menu. |
 | The server was down and fires the moment it's back | The alarm phase always runs for at least a day (`alarm_min`) before delivery. |
 | Someone forces you to check in or to cancel | The duress code looks like an ordinary check-in but quietly starts the panic delivery; the bot keeps showing a normal status and ignores attempts to cancel. Only a salted hash of the code is stored. |
 | A mistake: wrong person, wrong text | The `t.me` link check while typing usernames; the recipient check after every upload; the rehearsal; **Stop the delivery** cancels anything still scheduled. |
 
 ## What Phoenix does **not** protect against
 
-- **A compromised server.** To deliver without you, the server must hold the age private key that decrypts your packages, and **a logged-in session of your Telegram account**. Whoever controls the server can read your packages and use your Telegram account as you. So:
+- **A copy of the whole server.** To deliver without you, the server must hold the age private key that decrypts your packages, and **a logged-in session of your Telegram account**. It also keeps a database with your recipients' names and usernames, for the status and the event log. So anyone with the whole server can read your packages and use your Telegram account as you. That includes a hacked server, and **also a full hosting backup or snapshot**, or the provider's staff. Treat server backups like your Telegram password. So:
   - use a server **only for Phoenix**;
   - keep your SSH key safe and protect it with a passphrase;
-  - choose a hosting provider you trust;
+  - choose a hosting provider you trust, and don't turn on its backups or snapshots unless you trust where they're kept;
   - don't give anyone else access.
 - **A compromised computer.** Malware on your computer can read your packages while the vault is open, and can use your SSH key.
 - **Telegram itself.** Delivered messages are ordinary Telegram cloud chats. They aren't end-to-end encrypted, so Telegram can technically read them. For the most sensitive things, such as master passwords, consider handing over access to a password manager (many offer "emergency access") instead of the passwords themselves.

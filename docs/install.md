@@ -156,7 +156,7 @@ Don't share the token with anyone. If it leaks, send `/revoke` to BotFather and 
 
 > If my.telegram.org only says "ERROR" when you create the app, try again later, from another browser, or without a VPN or ad blocker. This is a known quirk of that site.
 
-**4. Your time zone.** It's used for letters scheduled on a date, such as a birthday at 09:00. Phoenix suggests your computer's time zone, so press Enter to accept it.
+**4. Your time zone.** It's used for letters scheduled on a date, such as a birthday at 09:00. Choose your computer's time zone, or search by city (`Kyiv`, `Berlin`, `New York`). You can change it later: Server → 🕐 Time zone.
 
 **Optional: a heartbeat URL.** If you'd like an email when the server goes down:
 

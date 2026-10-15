@@ -1,30 +1,39 @@
 # Changelog
 
-All notable changes to Phoenix. Dates are in YYYY-MM-DD.
+All notable changes to Phoenix. Versions follow [semantic versioning](https://semver.org); dates are YYYY-MM-DD.
 
-## Unreleased
+## 1.0.0 — 2026-10-15
 
-### Added
-- **Duress code:** a phrase that looks like an ordinary check-in, but quietly starts the panic delivery after a delay. The bot keeps showing a normal status, sends no alerts and pretends there's nothing to cancel; only the menu on your computer can stop it.
-- **A new look:** a splash with the phoenix logo, colored states, a farewell screen; menus scroll, cut or wrap long lines and redraw when the window is resized.
-- The logo at the top of the README, drawn from the same dots as in the terminal (light and dark versions).
-- **Terminal size check** like btop: below 80×24, Phoenix shows the current and needed size until the window is big enough.
-- A vault kept next to the code (early versions) is moved to `~/.local/share/phoenix/vault` automatically.
-- **One menu for everything:** `phoenix` without arguments opens an arrow-key menu.
-  - A step-by-step **setup** that explains where to get each key and checks its format. It creates and installs an SSH key if needed, and can be resumed later.
-  - **Recipients:** add people, write messages, drag in files, choose when to send, settings and backup people, with no config files to edit.
-  - **Check-ins, rehearsal, recipient check, pause, timers and panic** directly from the menu, plus a live status summary at the top.
-  - A **Server** menu: update, restart, logs, hosting paid-until date, new keys, logging in to Telegram again, moving to another server, and removing Phoenix from a server (logs out of Telegram first).
-- `install.sh`: installs the needed tools (after asking), downloads Phoenix and creates the `phoenix` command.
-- Servers with a non-root user and passwordless `sudo` (e.g. `ubuntu` on OVHcloud and AWS).
-- The vault locks when the menu exits, even if the terminal window is closed.
-- One SSH connection per session, so a key passphrase is asked only once.
-- Automated tests (pytest), CI, and documentation in `docs/`.
+The first release.
 
-### Changed
-- Packages and the vault now live in `~/.local/share/phoenix`, separate from the code. Existing vaults next to the code keep working.
-- Recipient settings are stored in a hidden `.recipient.toml` managed by the menu. Existing `recipient.toml` files are converted automatically.
+### The switch
+- Check-ins with one tap in your private control bot. Messages you send anywhere in Telegram count too, but an explicit check-in is still needed every 30 days.
+- Escalation before anything happens: reminders, then an alarm, then delivery. With the defaults, delivery comes after 21 days of silence. The alarm always lasts at least a day, so the switch never fires right after the server was down.
+- A **panic button** with a cancel window, and a **duress code**: a phrase that looks like an ordinary check-in but quietly starts the panic delivery. The bot keeps showing a normal status, and only the menu on your computer can stop it.
+- Pause for trips or hospital stays.
 
-## 2026-10-14
+### Delivery
+- Everything is sent from **your own Telegram account**: text, files in original quality, voice messages and round video messages. Each person gets only what you prepared for them.
+- Delayed and dated letters. Anything due within a year is handed to Telegram's own scheduled messages, so it arrives even if the server is gone by then.
+- A backup person for anyone who doesn't read their package in time, or can't be found.
+- Account actions after a trigger: a one-time auto-reply, a new bio, posts to groups or channels.
+- A rehearsal that sends everything to your Saved Messages, and a way to stop a delivery and cancel what's already scheduled.
+- Progress is stored per item: an interrupted delivery resumes and never sends anything twice.
 
-- First public version: the server (timer, control bot, delivery from your Telegram account, scheduling, backups, account actions), the CLI, server bootstrap, and the README.
+### The `phoenix` menu
+- One arrow-key menu for everything, with a splash and a farewell screen and a live status at the top. Below 80×24 it shows the size it needs, like btop.
+- A step-by-step setup. It explains where to get each key, checks it, creates an SSH key if needed, and can be resumed later.
+- Recipients, messages and files (drag them into the terminal), scheduling, backups and account actions, with no config files to edit.
+- Timers, time zone (with city search), hosting paid-until date, updates, logs, logging in to Telegram again, moving to another server, and removing Phoenix from a server.
+- `install.sh` installs the tools Phoenix needs (after asking) and the `phoenix` command.
+
+### Security and safety
+- Packages are encrypted on your computer before upload (age). On the server their names are hashed with a secret that stays on your computer, and on your computer they're kept in a password vault (gocryptfs) that locks when the menu exits.
+- The server exposes only SSH with key login; the firewall, fail2ban and automatic security updates are set up for you. Servers with a sudo user such as `ubuntu` work too.
+- The control bot answers only you. From the bot, someone holding your phone can't quietly switch Phoenix off: delaying timers can only get shorter, a pause lasts at most 30 days, and a delivery can be stopped only within 2 days of its start.
+- The switch runs apart from anything that talks to Telegram, so a slow Telegram call or a broken bot can't hold it up. Moving to another server stops the old one first, and Phoenix warns you if two programs ever read your bot.
+- An honest [security model](docs/security.md): a copy of the whole server includes the key to your packages and your Telegram session.
+
+### Project
+- Documentation in `docs/`: installation, usage, how it works, security, troubleshooting.
+- 55 automated tests, including a full simulated life of the switch and the menu driven like a user would. CI runs ruff, shellcheck, the tests, a dependency vulnerability scan, the CLI on Python 3.11 and 3.13, and the Docker build.

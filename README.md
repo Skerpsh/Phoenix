@@ -9,6 +9,7 @@
 
 **A self-hosted dead man's switch for Telegram.**
 
+[![Release](https://img.shields.io/github/v/release/Skerpsh/Phoenix)](https://github.com/Skerpsh/Phoenix/releases/latest)
 [![CI](https://github.com/Skerpsh/Phoenix/actions/workflows/ci.yml/badge.svg)](https://github.com/Skerpsh/Phoenix/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Your computer: Linux](https://img.shields.io/badge/your%20computer-Linux-informational)
@@ -76,7 +77,8 @@ Every interval can be changed. → [How it works in detail](docs/how-it-works.md
   - warnings if the Telegram session dies;
   - hosting payment reminders;
   - "are your packages still up to date?" prompts;
-  - no firing right after the server was down.
+  - no firing right after the server was down;
+  - someone holding your phone can't quietly switch it off through the bot.
 - 🧭 **One menu for everything:** setup, packages, check-ins, timers and the server, all with the arrow keys. No config files to edit.
 
 ## What you need
@@ -182,10 +184,10 @@ Day to day, you don't need the computer at all. Your control bot in Telegram has
 
 ## Security at a glance
 
-- 🔒 **Packages are encrypted on your computer** before they leave it, and stored on the server under anonymous names. A leaked disk or hosting backup reveals nothing readable.
+- 🔒 **Packages are encrypted on your computer** before they leave it, and on the server they're stored under hashed names. They never travel or lie around as plain files.
 - 🔐 **On your computer they're kept in a password vault**, which is open only while the menu runs.
 - 🚪 **The server exposes only SSH, with key login.** The bot answers only you.
-- ⚠️ **The server holds your Telegram session and the key to your packages.** That's what lets it act when you can't, but it also means whoever controls the server controls your Telegram account. Use a dedicated server and keep it to yourself.
+- ⚠️ **The server holds your Telegram session and the key to your packages.** That's what lets it act when you can't. It also means that **anyone with the whole server can read your packages and use your Telegram account**: that includes a hacked server, and also a full hosting backup or snapshot. Use a dedicated server, at a host you trust, and keep it to yourself.
 
 → [Security model](docs/security.md) · [Reporting a vulnerability](SECURITY.md)
 

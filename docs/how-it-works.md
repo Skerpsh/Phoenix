@@ -96,6 +96,8 @@ From the moment a package's first item was due, Phoenix waits `backup_after` (7d
 
 ## Safety nets
 
+The switch runs in its own loop, apart from anything that talks to Telegram. A slow Telegram call (a flood wait can last hours) or a broken control bot can't hold it up: Phoenix keeps watching your activity and delivering, and the menu on your computer shows what's wrong.
+
 The server also:
 
 - checks every 6 hours that the Telegram session still works, and warns you if it doesn't;
@@ -125,7 +127,10 @@ _account.toml               account actions (written by the menu)
 - Items are sent in alphabetical order of their path, and the deepest `@` folder decides when.
 - Names starting with `.` are never sent, and folders starting with `_` are ignored.
 
-On the server, each package becomes a folder with a hashed name holding `manifest.json.age` plus one `<hash>.age` per item. Nothing there reveals names, file names or contents.
+On the server, each package becomes a folder with a hashed name holding `manifest.json.age` plus one `<hash>.age` per item. The names are hashed with a secret kept in your computer's Phoenix settings, so the package files alone reveal neither names nor contents. Be aware of two other things on the server:
+
+- the database next to the package files does contain your recipients' names and usernames, for the status and the event log;
+- the server holds the key that decrypts everything (see [security](security.md)).
 
 | Where | What |
 |---|---|

@@ -22,6 +22,7 @@ When something fails, Phoenix shows a line starting with ❌ that says what went
 |---|---|
 | Step 1: `Permission denied` when copying the key | The password was wrong. Check it in your hosting panel; many hosts can reset it. |
 | Step 1: `Connection timed out` / `No route to host` | Check the IP address, and that the server is running in your hosting panel. |
+| Step 1: SSH on a port other than 22 | Add the server to `~/.ssh/config` (`Host myvps`, `HostName 203.0.113.7`, `Port 2222`, `User root`) and type `myvps` as the address. |
 | Step 1: "is not root and can't use sudo without a password" | Log in as `root` instead, or ask your host how to enable passwordless sudo. |
 | `REMOTE HOST IDENTIFICATION HAS CHANGED` | You reinstalled the server with the same IP. Run `ssh-keygen -R 203.0.113.7` (your IP), then try again. |
 | Step 2 fails during `apt` | The server may still be installing updates by itself right after creation. Wait 5 minutes, then try again. |
@@ -35,6 +36,10 @@ When something fails, Phoenix shows a line starting with ❌ that says what went
 | Problem | Fix |
 |---|---|
 | "The server runs an older Phoenix" | Server → Update Phoenix. |
+| "Control bot: …" in the menu | The bot can't connect or its token was revoked. Phoenix keeps watching your Telegram activity and still delivers, but fix it: Server → Change the bot token or Telegram API keys. |
+| "Another program is reading your bot" | Phoenix probably still runs on an old server. Remove it (point the menu at it, then Server → Remove Phoenix from this server) or delete that server at your host. |
+| "Unknown time zone" | Server → 🕐 Time zone, and search for your city. Until then, dated letters use UTC. |
+| The bot says a timer "can only be made shorter" | That's on purpose: make timers longer from the menu on your computer (⏱ Timers and reminders). |
 | "Phoenix is not running on the server" | Server → Restart Phoenix. If it stops again, look at Server → Live server logs. |
 | "Cannot connect to the server" | Is the server running and paid? Is your internet working? |
 | Bot reports "Telegram account problem" | The session was logged out: Server → Log in to Telegram again. |
@@ -43,7 +48,7 @@ When something fails, Phoenix shows a line starting with ❌ that says what went
 | "Could not lock the vault" | Close file manager windows and terminals that are inside the vault folder, then run `phoenix lock`. |
 | Forgot the vault password | `gocryptfs -passwd -masterkey=<your master key> ~/.local/share/phoenix/vault` |
 | "Terminal size too small" | Make the window at least 80×24 (maximize it, or make the font smaller). Phoenix continues by itself. |
-| Dated letters arrive at the wrong hour | Fix the time zone: Server → Change the bot token or Telegram API keys. |
+| Dated letters arrive at the wrong hour | Fix the time zone: Server → 🕐 Time zone. |
 
 ## FAQ
 
