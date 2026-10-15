@@ -31,6 +31,7 @@ TICK = 60
 RETRY_DELAY = 30 * 60
 WATCH_INTERVAL = 10 * 60
 HEALTH_EVERY = 6 * 3600
+REQUEST_POLL = 1
 ACTIVITY_THROTTLE = 5 * 60
 REVIEW_REPEAT = 7 * 86400
 
@@ -48,6 +49,7 @@ class Engine:
         self._stop = False
         self._loaded: Loaded | None = None
         self._loaded_sig: str | None = None
+        self._requests: asyncio.Task | None = None
 
     # ------------------------------------------------------------------ views
     @property
@@ -150,7 +152,7 @@ class Engine:
     async def verify(self) -> str:
         loaded = await self.loaded()
         if not loaded.packages and not loaded.actions and not loaded.errors:
-            return "No packages uploaded yet (on your PC: phoenix push)."
+            return "No packages uploaded yet (on your computer: phoenix → Upload changes to the server)."
         now, tz, lines = time.time(), self.cfg.tz, []
         for p in loaded.packages:
             ok, label = await self._resolve(p.hid, p.telegram)
@@ -207,6 +209,37 @@ class Engine:
         except Exception as e:
             log.warning("auto-reply to %s failed: %s", user_id, e)
 
+    # ------------------------------------------------------- requests from the CLI
+    async def _serve_requests(self) -> None:
+        """Actions the CLI asks for over SSH (`phoenix.ctl request ...`) that need the Telegram connection."""
+        while True:
+            for key in self.store.keys("request:"):
+                cmd = self.store.get(key)
+                self.store.delete(key)
+                try:
+                    text = await self.handle_request(cmd)
+                except Exception as e:
+                    log.exception("request %s failed", cmd)
+                    text = f"❌ {type(e).__name__}: {e}"
+                self.store.set("response:" + key.removeprefix("request:"), text)
+            await asyncio.sleep(REQUEST_POLL)
+
+    async def handle_request(self, cmd: str) -> str:
+        if cmd == "verify":
+            return await self.verify()
+        if cmd == "test":
+            if self.start_test():
+                return "🧪 Rehearsal started: every package is going to your Saved Messages in Telegram."
+            return "Not now: a delivery is running or Phoenix has already been triggered."
+        if cmd == "abort":
+            return await self.abort() or "Nothing is being delivered."
+        if cmd == "rearm":
+            return await self.rearm() or "Phoenix is already armed."
+        if cmd == "health":
+            await self._check_health(force=True)
+            return f"Telegram account: {'✅' if self.store.get('health_ok') else '⚠️'} {self.store.get('health_text')}"
+        return f"Unknown request: {cmd}"
+
     # ------------------------------------------------------------------- loop
     async def run(self) -> None:
         s = self.store
@@ -217,6 +250,7 @@ class Engine:
             await self.notify("🔥 Phoenix is armed.\n\n" + self.status(), keyboard="checkin")
         else:
             await self.notify("🔄 Phoenix restarted.\n\n" + self.status())
+        self._requests = asyncio.create_task(self._serve_requests())
         while True:
             try:
                 await self.tick()
@@ -504,7 +538,7 @@ class Engine:
             s.log("health", text)
             await self.notify(
                 f"⚠️ Telegram account problem: {text}\n"
-                "Packages CANNOT be delivered until this is fixed. On your PC run: phoenix login"
+                "Packages CANNOT be delivered until this is fixed. On your computer: phoenix → Server → Log in to Telegram again"
             )
         elif was_ok is False:
             await self.notify("✅ Telegram account is working again.")
@@ -548,6 +582,6 @@ class Engine:
         await self.notify(
             f"📝 Your packages were last updated {fmt(now - updated)} ago.\n"
             "Passwords change, people change — is everything still up to date?\n"
-            "To change something, run on your PC: phoenix edit",
+            "To change something, run phoenix on your computer.",
             keyboard="review",
         )

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # One-time setup of a fresh Ubuntu/Debian server: updates, Docker, firewall, SSH hardening.
-# Run from your PC with: phoenix bootstrap
+# Run from your computer by `phoenix` (setup step 2, or Server → Prepare the server again).
 set -euo pipefail
 
 REMOTE_DIR="${1:-/opt/phoenix}"
@@ -31,7 +31,9 @@ echo "==> Firewall: allow SSH (existing rules are kept; Phoenix itself needs no 
 ufw allow OpenSSH
 ufw --force enable
 
-if [ -s "$HOME/.ssh/authorized_keys" ]; then
+# The account you log in with (also when this runs through sudo as a normal user).
+LOGIN_HOME="$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6)"
+if [ -s "$LOGIN_HOME/.ssh/authorized_keys" ]; then
     echo "==> SSH: key login only"
     cat > /etc/ssh/sshd_config.d/00-phoenix.conf <<'EOF'
 PasswordAuthentication no
@@ -41,7 +43,7 @@ EOF
     sshd -t
     systemctl restart ssh 2>/dev/null || systemctl restart sshd
 else
-    echo "!! No SSH key in ~/.ssh/authorized_keys — password login left ENABLED. Add a key and re-run."
+    echo "!! No SSH key in $LOGIN_HOME/.ssh/authorized_keys: password login left ENABLED. Add a key and re-run."
 fi
 
 mkdir -p "$REMOTE_DIR/data"

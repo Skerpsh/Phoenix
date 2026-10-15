@@ -1,7 +1,7 @@
 """Your personal Telegram account (via Telethon) — used to deliver packages."""
 
 from collections.abc import Awaitable, Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from telethon import TelegramClient, errors, events, functions, types
@@ -56,7 +56,7 @@ class Account:
             if not self.client.is_connected():
                 await self.client.connect()
             if not await self.client.is_user_authorized():
-                return False, "session is not logged in (run: phoenix login)"
+                return False, "session is not logged in (on your computer: phoenix → Server → Log in to Telegram again)"
             me = await self.client.get_me()
             ttl = await self.client(functions.account.GetAccountTTLRequest())
             return True, f"logged in as {display_name(me)}; account self-destruct after {ttl.days} days offline"
@@ -79,7 +79,7 @@ class Account:
         schedule: float | None = None,
     ) -> list[int]:
         """Send now, or hand to Telegram's own scheduler when `schedule` (unix time) is given."""
-        when = datetime.fromtimestamp(schedule, timezone.utc) if schedule else None
+        when = datetime.fromtimestamp(schedule, UTC) if schedule else None
         try:
             if text is not None:
                 ids = []
@@ -102,7 +102,7 @@ class Account:
         peer = await self.client.get_input_entity(user_id)
         res = await self.client(functions.messages.GetPeerDialogsRequest(peers=[types.InputDialogPeer(peer=peer)]))
         read_up_to = res.dialogs[0].read_outbox_max_id
-        start = datetime.fromtimestamp(since, timezone.utc)
+        start = datetime.fromtimestamp(since, UTC)
         async for m in self.client.iter_messages(peer, offset_date=start, reverse=True, from_user="me", limit=1):
             return read_up_to >= m.id
         return False

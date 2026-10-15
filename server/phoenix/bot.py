@@ -7,7 +7,7 @@ from aiogram.filters import Command, CommandObject
 from aiogram.types import BotCommand, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from . import durations
-from .db import DEFAULT_SETTINGS, SETTING_HELP
+from .db import DEFAULT_SETTINGS, SETTING_HELP, settings_error
 from .durations import fmt
 from .engine import Engine
 from .state import events_text
@@ -110,16 +110,10 @@ def build_router(engine: Engine, owner_id: int) -> Router:
         except ValueError as e:
             await m.answer(str(e))
             return
-        if seconds < 60:
-            await m.answer("Minimum is 1m.")
-            return
         s = engine.store
-        after = {**s.settings(), name: seconds}
-        if after["trigger_after"] <= after["alarm_after"]:
-            await m.answer("trigger_after must be longer than alarm_after.")
-            return
-        if after["button_every"] < after["checkin_interval"]:
-            await m.answer("button_every can't be shorter than checkin_interval.")
+        error = settings_error({**s.settings(), name: seconds})
+        if error:
+            await m.answer(error)
             return
         s.set_setting(name, seconds)
         s.log("settings", f"{name} = {fmt(seconds)}")

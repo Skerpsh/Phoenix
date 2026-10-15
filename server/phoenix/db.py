@@ -32,6 +32,17 @@ SETTING_HELP = {
 }
 
 
+def settings_error(values: dict[str, int]) -> str | None:
+    """Why this combination of settings makes no sense, or None."""
+    if any(v < 60 for v in values.values()):
+        return "The minimum is 1 minute."
+    if values["trigger_after"] <= values["alarm_after"]:
+        return "Delivery (trigger_after) must come later than the alarm (alarm_after)."
+    if values["button_every"] < values["checkin_interval"]:
+        return "The button interval (button_every) can't be shorter than the check-in interval (checkin_interval)."
+    return None
+
+
 class Store:
     """Small key-value store, delivery log and event log on top of SQLite."""
 
@@ -69,6 +80,10 @@ class Store:
 
     def delete(self, key: str) -> None:
         self.db.execute("DELETE FROM kv WHERE key = ?", (key,))
+
+    def keys(self, prefix: str) -> list[str]:
+        rows = self.db.execute("SELECT key FROM kv WHERE substr(key, 1, ?) = ? ORDER BY key", (len(prefix), prefix))
+        return [row[0] for row in rows]
 
     def delete_prefix(self, prefix: str) -> None:
         self.db.execute("DELETE FROM kv WHERE substr(key, 1, ?) = ?", (len(prefix), prefix))

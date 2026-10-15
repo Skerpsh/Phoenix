@@ -42,7 +42,7 @@ class Config:
     def require(self, *names: str) -> None:
         missing = [n.upper() for n in names if not getattr(self, n)]
         if missing:
-            raise SystemExit(f"Missing settings in .env: {', '.join(missing)} (run: phoenix configure)")
+            raise SystemExit(f"Missing settings in .env: {', '.join(missing)} (on your computer: phoenix → Server → Change the bot token or Telegram API keys)")
 
 
 def load() -> Config:

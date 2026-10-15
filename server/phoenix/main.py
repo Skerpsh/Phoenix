@@ -20,7 +20,7 @@ async def main() -> None:
     cfg = config.load()
     cfg.require("bot_token", "owner_id", "api_id", "api_hash")
     if not cfg.identity_path.exists():
-        raise SystemExit("No encryption key yet (run: phoenix deploy)")
+        raise SystemExit("No encryption key yet (on your computer: phoenix → Server → Update Phoenix)")
     cfg.packages_dir.mkdir(parents=True, exist_ok=True)
 
     store = Store(cfg.db_path)
