@@ -149,3 +149,14 @@ def test_legacy_vault_moves_out_of_the_code(tmp_path, monkeypatch):
     assert not (code / "vault").exists()
     assert (data / "vault" / "encrypted-file").read_text() == "x" and core.VAULT == data / "vault"
     assert core.migrate_vault() is None, "nothing to do the second time"
+
+
+def test_readme_logo_matches_the_terminal_logo():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("logo_svg", ROOT / "scripts" / "logo_svg.py")
+    logo_svg = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(logo_svg)
+    for theme, colors in logo_svg.THEMES.items():
+        saved = (ROOT / "docs" / "assets" / f"logo-{theme}.svg").read_text()
+        assert saved == logo_svg.svg(colors), f"run: python3 scripts/logo_svg.py ({theme} logo is out of date)"

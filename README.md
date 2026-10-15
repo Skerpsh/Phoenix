@@ -1,6 +1,11 @@
 <div align="center">
 
-# 🔥 Phoenix
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-dark.svg">
+  <img src="docs/assets/logo-light.svg" alt="Phoenix logo: a phoenix with raised wings, drawn in dots" width="300">
+</picture>
+
+# Phoenix
 
 **A self-hosted dead man's switch for Telegram.**
 

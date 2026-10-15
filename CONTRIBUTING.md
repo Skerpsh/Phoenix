@@ -34,4 +34,5 @@ To try your changes on a real server, use a test Telegram account and a throwawa
 - If the CLI starts using a new server command (`server/phoenix/ctl.py`) or request (`Engine.handle_request`), bump `PROTOCOL` in `server/phoenix/__init__.py`, so the menu asks people to update their server.
 - Changes to timing, delivery or the package format need a test in `tests/test_engine.py`.
 - Update `CHANGELOG.md` and the docs in `docs/` along with the code.
+- If you change the logo in `cli/phx/art.py`, regenerate the README images: `python3 scripts/logo_svg.py`.
 - CI must pass: ruff, shellcheck, pytest, the CLI on Python 3.11 and 3.13, and the Docker build.
