@@ -17,8 +17,10 @@ from .core import CACHE, Failed, human, need, rsync, save_config, ssh
 
 RECIPIENT_FILE = ".recipient.toml"  # hidden: managed by the menu, not by hand
 LEGACY_RECIPIENT_FILE = "recipient.toml"
-META_FILES = {RECIPIENT_FILE, LEGACY_RECIPIENT_FILE}
+META_FILES = {RECIPIENT_FILE, LEGACY_RECIPIENT_FILE, ".capsule.toml"}
 ACCOUNT_TOML = "_account.toml"
+CAPSULES_DIR = "_capsules"  # time capsules: one folder each, sent on their date whatever happens
+CAPSULE_FILE = ".capsule.toml"
 ACCOUNT_BLOB = "_account.json.age"
 STAGING = CACHE / "staging"
 PUSHED = CACHE / "pushed"  # fingerprint of the packages as last uploaded
@@ -188,6 +190,59 @@ def read_package(d: Path) -> tuple[dict, list[dict], list[str]]:
     return manifest, items, problems
 
 
+# ------------------------------------------------------------------ time capsules
+def capsule_dirs(root: Path) -> list[Path]:
+    base = root / CAPSULES_DIR
+    return sorted(p for p in base.iterdir() if p.is_dir() and not p.name.startswith(".")) if base.exists() else []
+
+
+def load_capsule(d: Path) -> dict:
+    try:
+        meta = tomllib.loads((d / CAPSULE_FILE).read_text())
+    except (FileNotFoundError, tomllib.TOMLDecodeError):
+        meta = {}
+    return {"name": str(meta.get("name", "")).strip() or d.name, "telegram": str(meta.get("telegram", "")).strip(),
+            "date": str(meta.get("date", "")).strip()}
+
+
+def save_capsule(d: Path, meta: dict) -> None:
+    lines = ["# Managed by `phoenix`: change these in its menu rather than here."]
+    lines += [f"{k} = {json.dumps(meta[k], ensure_ascii=False)}" for k in ("name", "telegram", "date") if meta.get(k)]
+    (d / CAPSULE_FILE).write_text("\n".join(lines) + "\n")
+
+
+def read_capsule(d: Path) -> tuple[dict, list[dict], list[str]]:
+    """Like read_package, for a time capsule: one date for everything, no triggers, no backup."""
+    meta, problems = load_capsule(d), []
+    label = f"Time capsule “{meta['name']}”"
+    if not meta["telegram"]:
+        problems.append(f"{label}: who receives it is not set (Time capsules → it → Settings)")
+    try:
+        when = datetime.fromisoformat(meta["date"])
+    except ValueError:
+        when = None
+        problems.append(f"{label}: the date is not set (Time capsules → it → Settings)")
+    files = package_files(d)
+    if not files:
+        problems.append(f"{label}: nothing to send yet (write a message or add files)")
+    items = []
+    for p in files:
+        rel = p.relative_to(d).as_posix()
+        kind = item_kind(p)
+        if kind == "text":
+            try:
+                p.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                problems.append(f"{label}: {rel} is not UTF-8 text")
+                continue
+        elif p.stat().st_size > TG_FILE_LIMIT:
+            problems.append(f"{label}: {rel} is {human(p.stat().st_size)}, over Telegram's 2 GB limit; split it")
+        items.append({"path": p, "rel": rel, "kind": kind})
+    manifest = {"name": meta["name"], "telegram": meta["telegram"], "on": [], "delay": 0,
+                "capsule_date": when.isoformat(timespec="minutes") if when else ""}
+    return manifest, items, problems
+
+
 def read_account(f: Path) -> tuple[dict | None, list[str]]:
     if not f.exists():
         return None, []
@@ -345,14 +400,19 @@ def push_from(cfg: dict, packages_dir: Path) -> None:
     if not public_key:
         raise Failed("the server's encryption key is unknown: finish the setup first (Server → Update Phoenix)")
     dirs = sorted(p for p in packages_dir.iterdir() if p.is_dir() and not p.name.startswith((".", "_")))
-    if not dirs:
+    capsules = capsule_dirs(packages_dir)
+    if not dirs and not capsules:
         raise Problems(["there are no recipients yet (Recipients → Add a recipient)"])
 
     loaded, problems = [], []
     for d in dirs:
         manifest, items, issues = read_package(d)
         problems += issues
-        loaded.append((d, manifest, items))
+        loaded.append((d, manifest, items, ""))
+    for d in capsules:
+        manifest, items, issues = read_capsule(d)
+        problems += issues
+        loaded.append((d, manifest, items, CAPSULES_DIR))
     account, issues = read_account(packages_dir / ACCOUNT_TOML)
     problems += issues
     if problems:
@@ -370,14 +430,15 @@ def push_from(cfg: dict, packages_dir: Path) -> None:
     cache = json.loads(cache_path.read_text()) if cache_path.exists() else {}
     new_cache, keep = {}, set()
 
-    for d, manifest, items in loaded:
-        hid = h16(f"{salt}:package:{d.name}")
-        out = STAGING / hid
-        out.mkdir(exist_ok=True)
-        keep.add(hid)
+    keep_capsules = set()
+    for d, manifest, items, area in loaded:
+        hid = h16(f"{salt}:{area or 'package'}:{d.name}")
+        out = STAGING / area / hid if area else STAGING / hid
+        out.mkdir(parents=True, exist_ok=True)
+        (keep_capsules if area else keep).add(hid)
         entries, keep_blobs = [], {"manifest.json.age"}
         for item in items:
-            key = f"{d.name}/{item['rel']}"
+            key = f"{area}/{d.name}/{item['rel']}" if area else f"{d.name}/{item['rel']}"
             iid = h16(f"{salt}:{key}")
             blob = f"{iid}.age"
             st = item["path"].stat()
@@ -396,6 +457,10 @@ def push_from(cfg: dict, packages_dir: Path) -> None:
                 stale.unlink()
 
         total = sum(e["size"] for e in entries)
+        if area:
+            print(f"✔ time capsule “{manifest['name']}” → {manifest['telegram']}: {len(entries)} item(s), "
+                  f"{human(total)}, on {manifest['capsule_date'].replace('T', ' at ')}")
+            continue
         extras = []
         if tuple(manifest["on"]) != TRIGGERS:
             extras.append(f"only on {manifest['on'][0]}")
@@ -420,6 +485,11 @@ def push_from(cfg: dict, packages_dir: Path) -> None:
         parts = [n for n in ("autoreply", "about") if n in account] + [f"{len(account['posts'])} post(s)"]
         print(f"✔ account actions on {', '.join(account['on'])}: {', '.join(parts)}")
 
+    if keep_capsules:
+        keep.add(CAPSULES_DIR)
+        for stale in (STAGING / CAPSULES_DIR).iterdir():
+            if stale.name not in keep_capsules:
+                shutil.rmtree(stale)
     for stale in STAGING.iterdir():
         if stale.name not in keep:
             shutil.rmtree(stale) if stale.is_dir() else stale.unlink()

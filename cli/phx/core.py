@@ -396,6 +396,47 @@ def vault_init(cfg: dict) -> None:
     print(f"✅ Vault ready: {VAULT}\nYou can back up this folder anywhere (USB, cloud): it's useless without the password.")
 
 
+def removable_drives() -> list[Path]:
+    """Mounted USB sticks and external disks (the usual desktop mount places)."""
+    import getpass
+
+    user = getpass.getuser()
+    roots = [Path("/run/media") / user, Path("/media") / user, Path("/Volumes")]
+    return sorted(p for root in roots if root.is_dir() for p in root.iterdir() if p.is_dir() and os.access(p, os.W_OK))
+
+
+RESTORE_NOTE = """This is an encrypted backup of a Phoenix vault (https://github.com/Skerpsh/Phoenix).
+
+To use it on a new computer:
+  1. Install Phoenix:  curl -fsSL https://raw.githubusercontent.com/Skerpsh/Phoenix/main/install.sh | bash
+  2. Copy the "vault" folder from here to:  ~/.local/share/phoenix/vault
+  3. Run phoenix. It asks for the vault password.
+
+Forgot the password? With the master key you wrote down:
+  gocryptfs -passwd -masterkey=<master key> ~/.local/share/phoenix/vault
+"""
+
+
+def backup_vault(target: Path) -> Path:
+    """Copy the encrypted vault to `target`/phoenix-vault-<date>, with restore instructions; verify the copy."""
+    if not vault_enabled():
+        raise Failed("there's no vault to back up yet (🔐 Vault → Protect them with a password)")
+    from datetime import datetime
+
+    dest = target / f"phoenix-vault-{datetime.now():%Y-%m-%d-%H%M}"
+    if dest.exists():
+        raise Failed(f"{dest} already exists")
+    sys.stdout.flush()
+    print(f"Copying to {dest}…")
+    shutil.copytree(VAULT, dest / "vault")
+    (dest / "HOW-TO-RESTORE.txt").write_text(RESTORE_NOTE)
+    original = sorted((p.relative_to(VAULT), p.stat().st_size) for p in VAULT.rglob("*") if p.is_file())
+    copied = sorted((p.relative_to(dest / "vault"), p.stat().st_size) for p in (dest / "vault").rglob("*") if p.is_file())
+    if original != copied:
+        raise Failed(f"the copy in {dest} doesn't match the vault; try another place")
+    return dest
+
+
 def lock() -> bool:
     mp = mountpoint()
     return os.path.ismount(mp) and unmount(mp)

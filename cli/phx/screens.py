@@ -7,7 +7,7 @@ import re
 import shlex
 import shutil
 import subprocess
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import available_timezones
 
@@ -67,6 +67,84 @@ def find_time_zones(text: str) -> list[str]:
     zones = sorted(z for z in available_timezones() if "/" in z and not z.startswith(("Etc/", "SystemV/")))
     exact = [z for z in zones if z.lower() == wanted or z.lower().rsplit("/", 1)[-1] == wanted]
     return exact or [z for z in zones if wanted in z.lower()]
+
+
+# The letter guide: questions shown only to you; the letter is just your answers, in your own language.
+LETTER_GUIDE = [
+    ("What happened", "Say right away what this message is, so they understand at once. For example: if you're "
+                      "reading this, something has happened to me; I wrote this in advance and it was sent "
+                      "automatically."),
+    ("Something personal", "Anything you want them to know or remember. What they mean to you."),
+    ("What to do first", "Concrete first steps: who to call, what to check, what not to do in a hurry."),
+    ("Where things are", "Documents, keys, money, accounts and passwords, or where to find them "
+                         "(a password manager, a safe, a folder)."),
+    ("Who to contact", "People who can help, and how to reach them."),
+    ("Anything else", "A goodbye, a wish, a joke: whatever you'd like to end with."),
+]
+
+
+def guided_letter() -> str:
+    """Ask the guide's questions one by one; the letter is the answers, one paragraph each."""
+    print(f"{BOLD}✍️ Letter guide{RESET}")
+    ui.explain("Answer in your own words and language. Only your answers go into the letter; the questions don't.\n"
+               "Skip any question by pressing Enter twice right away.\n")
+    answers = []
+    for n, (title, hint) in enumerate(LETTER_GUIDE, 1):
+        answer = ui.ask_text(f"{BOLD}{n}/{len(LETTER_GUIDE)} · {title}{RESET}\n{DIM}{hint}{RESET}")
+        if answer:
+            answers.append(answer)
+        print()
+    return "\n\n".join(answers)
+
+
+def capsule_target(telegram: str) -> str:
+    return "you (Saved Messages)" if telegram == "me" else telegram or "(not set)"
+
+
+def offset_label(seconds: float) -> str:
+    return "right away" if seconds <= 0 else f"after {fmt(seconds)}"
+
+
+def timeline(root: Path, kind: str) -> list[tuple[float, str, str]]:
+    """What goes out, and when, if Phoenix is triggered by `kind` ("silence" or "panic").
+    Returns (seconds after the trigger, label, what) sorted by time; dated items count from now."""
+    now, rows = datetime.now(), []
+    for d in pk.recipient_dirs(root):
+        manifest, items, _ = pk.read_package(d)
+        if not manifest or kind not in manifest["on"]:
+            continue
+        name = manifest["name"]
+        groups: dict[tuple[float, str], list[str]] = {}
+        for item in items:
+            if "date" in item:
+                when = datetime.fromisoformat(item["date"])
+                key = (max(0.0, (when - now).total_seconds()), f"on {item['date'].replace('T', ' at ')}")
+            else:
+                offset = manifest["delay"] + item.get("after", 0)
+                key = (offset, offset_label(offset))
+            groups.setdefault(key, []).append(item["kind"])
+        for (offset, label), kinds in groups.items():
+            rows.append((offset, label, f"{name}: {describe_kinds(kinds)}"))
+        if manifest.get("backup") and items:
+            first = min((manifest["delay"] + i.get("after", 0) for i in items if "date" not in i), default=0)
+            offset = first + manifest["backup_after"]
+            rows.append((offset, offset_label(offset),
+                         f"{name}: if it isn't read by then, the same goes to {manifest['backup']} (backup)"))
+    acc = pk.load_account(root)
+    if kind in acc["on"]:
+        if acc["about"]:
+            rows.append((0, "right away", "Your profile bio changes"))
+        if acc["autoreply"]:
+            rows.append((0, "right away", "Auto-reply turns on for people who write to you"))
+        for post in acc["posts"]:
+            rows.append((post["delay"], offset_label(post["delay"]), f"Post to {post['chat']}"))
+    return sorted(rows, key=lambda r: (r[0], r[2]))
+
+
+def describe_kinds(kinds: list[str]) -> str:
+    names = {"text": "message", "voice": "voice message", "round": "round video", "file": "file"}
+    counts = {k: kinds.count(k) for k in names if k in kinds}
+    return ", ".join(f"{n} {names[k]}{'s' if n > 1 else ''}" for k, n in counts.items())
 
 
 def open_folder(path: Path) -> None:
@@ -366,6 +444,7 @@ class App:
             items = [
                 ("✅ I'm OK: check in", self.checkin),
                 ("📦 Recipients and what they receive", self.recipients),
+                ("🗓 Timeline: what goes out, and when", self.timeline),
                 ("👤 Your account after the trigger: auto-reply, bio, posts", self.account),
                 ("⬆️ Upload changes to the server", self.upload),
                 ("🧪 Rehearsal: send everything to my Saved Messages", self.test),
@@ -384,6 +463,7 @@ class App:
             else:
                 items.append(("🚨 Panic button", self.panic))
             items += [
+                ("⏳ Time capsules: messages for a future date", self.capsules),
                 ("🤫 Duress code: a silent alarm", self.duress),
                 ("📜 History", self.history),
                 ("🖥 Server", self.server),
@@ -603,18 +683,28 @@ class App:
                 return
             self.run(lambda action=actions[idx][1]: action(d))
 
-    def write_message(self, d: Path) -> None:
-        text = ui.ask_text(f"{BOLD}✍️ Write the message{RESET}")
+    def write_message(self, d: Path, *, scheduled: bool = True) -> None:
+        how = ui.select("How do you want to write it?", [
+            "✍️ Myself, from scratch",
+            "🧭 With a guide: a few questions help you cover what matters",
+        ], back=None)
+        text = guided_letter() if how == 1 else ui.ask_text(f"{BOLD}✍️ Write the message{RESET}")
         if not text:
             ui.note("Nothing written.")
             return
-        sub = ui.ask_when()
+        if how == 1:
+            print(f"{BOLD}Your letter:{RESET}\n\n{text}\n")
+            if not ui.confirm("Save this letter? You can edit it later (Edit a message).", yes="💾 Save", no="Discard",
+                              default=True):
+                ui.note("Discarded.")
+                return
+        sub = ui.ask_when() if scheduled else ""
         dest = d / sub if sub else d
         dest.mkdir(exist_ok=True)
         (dest / f"{pk.next_number(d):02d}-message.txt").write_text(text + "\n")
         ui.note("✔ Message saved.")
 
-    def add_files(self, d: Path) -> None:
+    def add_files(self, d: Path, *, scheduled: bool = True) -> None:
         print(f"{BOLD}📎 Add files{RESET}")
         ui.explain("Drag files or folders from your file manager into this window (or paste their paths), then press Enter.\n"
                    ".ogg/.opus files become voice messages; everything else arrives as a file in original quality.")
@@ -632,7 +722,7 @@ class App:
         if not chosen:
             ui.note("No files added.")
             return
-        sub = ui.ask_when()
+        sub = ui.ask_when() if scheduled else ""
         dest = d / sub if sub else d
         dest.mkdir(exist_ok=True)
         n = pk.next_number(d)
@@ -685,6 +775,122 @@ class App:
         if ui.confirm(f"Delete {name} and everything prepared for them?", yes="❌ Delete"):
             shutil.rmtree(d)
             ui.note(f"✔ Deleted {name}.")
+
+    # ------------------------------------------------------------------ timeline
+    def timeline(self) -> None:
+        root = self.root()
+        kind = ui.select("Show what happens…", ["if you stop checking in", "if you press the panic button"])
+        if kind is None:
+            return
+        trigger = ("silence", "panic")[kind]
+        rows = timeline(root, trigger)
+        s = self.summary or {}
+        print(f"{BOLD}🗓 If Phoenix is triggered {'by silence' if trigger == 'silence' else 'by the panic button'}"
+              f"{RESET}")
+        if trigger == "silence" and s.get("eta_in") is not None:
+            ui.explain(f"(if you stayed silent from now on, that would be in {fmt(s['eta_in'])})")
+        print()
+        if not rows:
+            print("  Nothing would be sent. Add recipients, or check when their packages are sent (their Settings).")
+        width = max((len(label) for _, label, _ in rows), default=0)
+        last = None
+        for _, label, what in rows:
+            print(f"  {FLAME}{(label if label != last else ''):<{width}}{RESET}   {what}")
+            last = label
+        capsules = [(pk.load_capsule(d), d) for d in pk.capsule_dirs(root)]
+        if capsules:
+            print(f"\n{BOLD}⏳ Time capsules{RESET} {DIM}(sent on their date, whatever happens){RESET}")
+            for meta, d in sorted(capsules, key=lambda c: c[0]["date"]):
+                kinds = [pk.item_kind(p) for p in pk.package_files(d)]
+                print(f"  {FLAME}{meta['date'].replace('T', ' at ')}{RESET}   “{meta['name']}” → "
+                      f"{capsule_target(meta['telegram'])}: {describe_kinds(kinds) or 'nothing yet'}")
+        ui.pause()
+
+    # ------------------------------------------------------------- time capsules
+    def capsules(self) -> None:
+        root = self.root()
+        while True:
+            dirs = pk.capsule_dirs(root)
+            header = (f"{BOLD}⏳ Time capsules{RESET}\n"
+                      "Messages that go out on a date you choose, whatever happens: to someone on their 18th "
+                      "birthday, or to yourself in five years. They wait, encrypted, on your server until then.")
+            lines = []
+            for d in dirs:
+                meta, problems = pk.load_capsule(d), pk.read_capsule(d)[2]
+                lines.append(f"{meta['date'].replace('T', ' at ') or '(no date)'} · “{meta['name']}” → "
+                             f"{capsule_target(meta['telegram'])}{'  ⚠️' if problems else ''}")
+            idx = ui.select("Choose a capsule, or make a new one", lines + ["➕ New time capsule"], header=header)
+            if idx is None:
+                return
+            pick = None if idx == len(dirs) else dirs[idx]
+            self.run(lambda pick=pick: self.open_capsule(pick or self.new_capsule()))
+
+    def capsule_settings(self, d: Path, meta: dict) -> dict:
+        meta["name"] = ui.ask("A name for it (only you see it), e.g. “Anna's 18th birthday”", meta.get("name", ""))
+        to = ui.select("Who is it for?", ["Yourself (it arrives in your Saved Messages)", "Someone else"],
+                       back=None, default=1 if meta.get("telegram") not in ("", "me") else 0)
+        meta["telegram"] = "me" if to == 0 else ui.ask_telegram(
+            TELEGRAM_QUESTION, "" if meta.get("telegram") == "me" else meta.get("telegram", ""))
+        while True:
+            raw = ui.ask("Date as YYYY-MM-DD, optionally with a time: YYYY-MM-DD HH:MM (default 09:00)",
+                         meta.get("date", "").replace("T", " "))
+            try:
+                when = datetime.fromisoformat(raw.replace(" ", "T"))
+            except ValueError:
+                print("  For example: 2034-05-12 or 2034-05-12 18:30")
+                continue
+            when = when if ":" in raw else when.replace(hour=9, minute=0)
+            if when <= datetime.now():
+                print("  That date has already passed.")
+                continue
+            meta["date"] = when.isoformat(timespec="minutes")
+            break
+        pk.save_capsule(d, meta)
+        return meta
+
+    def new_capsule(self) -> Path:
+        root = self.root()
+        print(f"{BOLD}⏳ New time capsule{RESET}\n")
+        base = root / pk.CAPSULES_DIR
+        base.mkdir(exist_ok=True)
+        d = pk.folder_for(base, f"capsule-{datetime.now():%Y%m%d-%H%M%S}")
+        d.mkdir(parents=True)
+        try:
+            meta = self.capsule_settings(d, {})
+        except BaseException:
+            shutil.rmtree(d, ignore_errors=True)  # cancelled halfway: leave nothing behind
+            raise
+        ui.note(f"✔ Time capsule “{meta['name']}” created. Now add what it should contain.")
+        return d
+
+    def open_capsule(self, d: Path) -> None:
+        actions = [
+            ("✍️ Write a message", lambda d: self.write_message(d, scheduled=False)),
+            ("📎 Add files: photos, videos, voice messages, documents", lambda d: self.add_files(d, scheduled=False)),
+            ("📝 Edit a message", self.edit_message),
+            ("🗑 Remove something from it", self.remove_item),
+            ("⚙️ Settings: name, who it's for, date", lambda d: self.capsule_settings(d, pk.load_capsule(d))
+             and ui.note("✔ Settings saved.")),
+            ("📂 Open its folder", lambda d: open_folder(d)),
+            ("❌ Delete this capsule", self.delete_capsule),
+        ]
+        while d.exists():
+            meta, files = pk.load_capsule(d), pk.package_files(d)
+            lines = [f"{BOLD}⏳ “{meta['name']}”{RESET} → {capsule_target(meta['telegram'])}",
+                     f"Sent on {meta['date'].replace('T', ' at ') or '(no date yet)'}, whatever happens.", "",
+                     "What it contains, in this order:"]
+            lines += [f"  {i}. {item_label(d, p)}" for i, p in enumerate(files, 1)] or ["  (nothing yet)"]
+            lines += [f"⚠️ {problem}" for problem in pk.read_capsule(d)[2]]
+            idx = ui.select("What next?", [label for label, _ in actions], header="\n".join(lines))
+            if idx is None:
+                return
+            self.run(lambda action=actions[idx][1]: action(d))
+
+    def delete_capsule(self, d: Path) -> None:
+        name = pk.load_capsule(d)["name"]
+        if ui.confirm(f"Delete the time capsule “{name}”? After the next upload it won't be sent.", yes="❌ Delete"):
+            shutil.rmtree(d)
+            ui.note(f"✔ Deleted “{name}”. Upload to remove it from the server too.")
 
     # ----------------------------------------------------------- account actions
     def account(self) -> None:
@@ -889,7 +1095,8 @@ class App:
                 state = "🔓 open (locks when you quit)" if self._root is not None else "🔒 locked"
                 header = (f"{BOLD}🔐 Vault{RESET}: {state}\nYour packages are stored encrypted in {core.VAULT}.\n"
                           "You can back up that folder anywhere: without your password it's useless.")
-                options = [("🔒 Lock now", self.lock), ("📂 Open the packages folder", lambda: open_folder(self.root()))]
+                options = [("💾 Back up the vault (USB stick, cloud folder…)", self.backup_vault),
+                           ("🔒 Lock now", self.lock), ("📂 Open the packages folder", lambda: open_folder(self.root()))]
             else:
                 header = (f"{BOLD}🔐 Vault{RESET}: off\n"
                           "Your packages are stored on this computer unencrypted: anyone with access to it can read them.")
@@ -899,6 +1106,26 @@ class App:
             if idx is None:
                 return
             self.run(options[idx][1])
+
+    def backup_vault(self) -> None:
+        print(f"{BOLD}💾 Back up the vault{RESET}")
+        ui.explain("The copy stays encrypted: without your vault password or master key it's useless, so it can go\n"
+                   "anywhere: a USB stick, an external disk, a cloud folder.")
+        drives = core.removable_drives()
+        options = [(f"💽 {p}", p) for p in drives] + [("📁 Another folder (type or drag it here)", None)]
+        idx = ui.select("Where to?", [label for label, _ in options])
+        if idx is None:
+            return
+        target = options[idx][1]
+        if target is None:
+            paths = [p for p in [Path(x).expanduser() for x in [ui.ask("Folder")] if x] if p.is_dir()]
+            if not paths:
+                raise Failed("that folder doesn't exist")
+            target = paths[0]
+        copy = core.backup_vault(target)
+        print(f"\n✅ Backed up to {copy}")
+        print(f"{BOLD}Remember:{RESET} to open it you need your vault password, or the master key you wrote down.")
+        ui.pause()
 
     def lock(self) -> None:
         self.close()
