@@ -6,11 +6,11 @@ from aiogram import F, Router
 from aiogram.filters import Command, CommandObject
 from aiogram.types import BotCommand, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
-from . import durations
+from . import durations, duress
 from .db import DEFAULT_SETTINGS, SETTING_HELP, settings_error
 from .durations import fmt
 from .engine import Engine
-from .state import events_text
+from .state import events_text, silent
 
 COMMANDS = [
     BotCommand(command="checkin", description="I'm OK — reset the timer"),
@@ -59,22 +59,40 @@ def review_keyboard() -> InlineKeyboardMarkup:
 KEYBOARDS = {"checkin": checkin_keyboard, "review": review_keyboard}
 
 
-def build_router(engine: Engine, owner_id: int) -> Router:
-    r = Router()
+def next_due_text(engine: Engine) -> str:
+    return f"Next check-in due in {fmt(engine.store.setting('checkin_interval'))}."
+
+
+def owner_gate(engine: Engine, owner_id: int):
+    """Middleware: ignore everyone but the owner; any owner message is a check-in; the duress code is caught here."""
 
     async def owner_only(handler, event, data):
         user = getattr(event, "from_user", None)
         if user is None or user.id != owner_id:
             return None
+        if duress.is_code(engine.store, getattr(event, "text", None)):
+            # Answer exactly like an ordinary message to the bot, so whoever is watching sees nothing unusual.
+            was_late = engine.checkin()
+            engine.duress()
+            if was_late:
+                await event.answer("✅ Check-in recorded, alarm cleared.")
+            await event.answer(f"✅ Check-in recorded. {next_due_text(engine)}\n/help for commands.")
+            return None
         if engine.checkin():
             await engine.notify("✅ Check-in recorded, alarm cleared.")
         return await handler(event, data)
 
-    r.message.outer_middleware(owner_only)
-    r.callback_query.outer_middleware(owner_only)
+    return owner_only
+
+
+def build_router(engine: Engine, owner_id: int) -> Router:
+    r = Router()
+
+    r.message.outer_middleware(owner_gate(engine, owner_id))
+    r.callback_query.outer_middleware(owner_gate(engine, owner_id))
 
     def next_due() -> str:
-        return f"Next check-in due in {fmt(engine.store.setting('checkin_interval'))}."
+        return next_due_text(engine)
 
     @r.message(Command("start", "help"))
     async def help_(m: Message):
@@ -161,7 +179,9 @@ def build_router(engine: Engine, owner_id: int) -> Router:
 
     @r.message(Command("test"))
     async def test(m: Message):
-        if engine.start_test():
+        if silent(engine.store):
+            await m.answer("🧪 Test started: every package goes to your Saved Messages. /abort to stop.")
+        elif engine.start_test():
             await m.answer("🧪 Test started: every package goes to your Saved Messages. /abort to stop.")
         else:
             await m.answer("Not now: a delivery is running or Phoenix has already been triggered.")
@@ -181,7 +201,10 @@ def build_router(engine: Engine, owner_id: int) -> Router:
     async def panic_yes(q: CallbackQuery):
         await q.answer()
         await q.message.edit_reply_markup(reply_markup=None)
-        if engine.panic():
+        if silent(engine.store):
+            delay = fmt(engine.store.setting("panic_delay"))
+            await q.message.answer(f"🚨 Panic armed. Delivery starts in {delay}. Send /cancel to stop it.")
+        elif engine.panic():
             delay = fmt(engine.store.setting("panic_delay"))
             await q.message.answer(f"🚨 Panic armed. Delivery starts in {delay}. Send /cancel to stop it.")
         else:
@@ -194,14 +217,23 @@ def build_router(engine: Engine, owner_id: int) -> Router:
 
     @r.message(Command("cancel"))
     async def cancel(m: Message):
+        if silent(engine.store):  # under duress: pretend there is nothing to cancel
+            await m.answer("No panic is pending.")
+            return
         await m.answer("✅ Panic cancelled." if engine.cancel_panic() else "No panic is pending.")
 
     @r.message(Command("abort"))
     async def abort(m: Message):
+        if silent(engine.store):
+            await m.answer("Nothing is being delivered.")
+            return
         await m.answer(await engine.abort() or "Nothing is being delivered.")
 
     @r.message(Command("rearm"))
     async def rearm(m: Message):
+        if silent(engine.store):
+            await m.answer("Phoenix is already armed.")
+            return
         await m.answer(await engine.rearm() or "Phoenix is already armed.")
 
     @r.message(Command("paiduntil"))

@@ -44,22 +44,36 @@ def button_required(s: Store, now: float) -> bool:
     return cap < inactivity
 
 
-def trigger_eta(s: Store, now: float) -> float | None:
-    """When delivery happens if you stay silent from now on."""
-    if s.get("phase", "armed") in ("triggered", "done"):
-        return None
+def silent(s: Store) -> bool:
+    """A silent alarm (duress code) is on: what the bot shows must look normal."""
+    return s.get("silent_since") is not None
+
+
+def panic_due(s: Store) -> float | None:
+    """When a pending panic fires (the duress code sets its own time)."""
     panic_at = s.get("panic_at")
-    if panic_at is not None:
-        return panic_at + s.setting("panic_delay")
+    if panic_at is None:
+        return None
+    return s.get("panic_due") or panic_at + s.setting("panic_delay")
+
+
+def trigger_eta(s: Store, now: float, *, masked: bool = False) -> float | None:
+    """When delivery happens if you stay silent from now on (masked: as if no alarm were on)."""
+    if s.get("phase", "armed") in ("triggered", "done") and not masked:
+        return None
+    if panic_due(s) is not None and not masked:
+        return panic_due(s)
     due = deadline(s, now)
-    alarm_since = s.get("alarm_since")
+    alarm_since = None if masked else s.get("alarm_since")
     alarm_start = alarm_since if alarm_since is not None else max(now, due + s.setting("alarm_after"))
     return max(due + s.setting("trigger_after"), alarm_start + s.setting("alarm_min"))
 
 
-def status_text(s: Store, packages_count: int) -> str:
+def status_text(s: Store, packages_count: int, *, reveal: bool = False) -> str:
+    """The state as text. During a silent alarm it looks normal, unless `reveal` (the owner's own computer)."""
     now = time.time()
-    phase = s.get("phase", "armed")
+    masked = silent(s) and not reveal
+    phase = "armed" if masked else s.get("phase", "armed")
     lines = [f"State: {PHASES.get(phase, phase)}"]
 
     last = s.get("last_checkin")
@@ -83,10 +97,12 @@ def status_text(s: Store, packages_count: int) -> str:
             else:
                 lines.append(f"Check-in overdue by: {fmt(now - due)}")
 
-    if s.get("panic_at") is not None:
+    if silent(s) and reveal:
+        lines.append("🤫 SILENT ALARM (duress code): the bot shows a normal status")
+    if s.get("panic_at") is not None and not masked:
         lines.append("🚨 PANIC pending — /cancel to stop")
 
-    eta = trigger_eta(s, now)
+    eta = trigger_eta(s, now, masked=masked)
     if eta is not None:
         lines.append(f"Delivery if you stay silent: in {fmt(eta - now)}")
 
@@ -112,8 +128,10 @@ def status_text(s: Store, packages_count: int) -> str:
     return "\n".join(lines)
 
 
-def events_text(s: Store, limit: int = 20) -> str:
+def events_text(s: Store, limit: int = 20, *, reveal: bool = False) -> str:
     rows = s.recent_events(limit)
+    if silent(s) and not reveal:
+        rows = [row for row in rows if row[0] < s.get("silent_since")]
     if not rows:
         return "No events yet."
     return "\n".join(f"{datetime.fromtimestamp(ts):%Y-%m-%d %H:%M} [{kind}] {text}" for ts, kind, text in rows)

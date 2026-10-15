@@ -10,12 +10,12 @@ import time
 import uuid
 from datetime import date
 
-from . import PROTOCOL, config, durations
+from . import PROTOCOL, config, durations, duress
 from .db import DEFAULT_SETTINGS, SETTING_HELP, Store, settings_error
 from .durations import fmt
 from .engine import Engine
 from .packages import package_dirs
-from .state import PHASES, activity_enabled, deadline, events_text, status_text, trigger_eta
+from .state import PHASES, activity_enabled, deadline, events_text, panic_due, silent, status_text, trigger_eta
 
 REQUEST_TIMEOUT = 180
 
@@ -34,6 +34,10 @@ def summary(store: Store, packages: int) -> dict:
         "due_in": deadline(store, now) - now if watching else None,
         "eta_in": eta - now if eta is not None else None,
         "panic_pending": store.get("panic_at") is not None,
+        "panic_in": panic_due(store) - now if panic_due(store) is not None else None,
+        "silent": silent(store),
+        "duress_set": store.get("duress") is not None,
+        "duress_delay": duress.delay(store),
         "activity": activity_enabled(store),
         "packages": packages,
         "health_ok": store.get("health_ok"),
@@ -65,11 +69,11 @@ def main() -> None:
     packages = len(package_dirs(cfg.packages_dir))
 
     if cmd == "status":
-        print(status_text(store, packages))
+        print(status_text(store, packages, reveal=True))
     elif cmd == "summary":
         print(json.dumps(summary(store, packages)))
     elif cmd == "log":
-        print(events_text(store, 50))
+        print(events_text(store, 50, reveal=True))
     elif cmd == "settings":
         print(json.dumps({
             "settings": {name: {"value": value, "help": SETTING_HELP[name]} for name, value in store.settings().items()},
@@ -108,7 +112,28 @@ def main() -> None:
             raise SystemExit("Phoenix is already delivering or has delivered.")
         print(f"🚨 Panic armed. Delivery starts in {fmt(store.setting('panic_delay'))} unless you cancel it.")
     elif cmd == "cancel":
-        print("✅ Panic cancelled." if engine.cancel_panic() else "No panic is pending.")
+        was_silent = silent(store)
+        if engine.cancel_panic():
+            print("✅ Silent alarm cancelled." if was_silent else "✅ Panic cancelled.")
+        else:
+            print("No panic is pending.")
+    elif cmd == "duress-set":  # the phrase comes on stdin, so it never appears in a process list
+        phrase = sys.stdin.read().strip()
+        if len(duress.normalize(phrase)) < 4:
+            raise SystemExit("The code must be at least 4 characters.")
+        duress.set_code(store, phrase)
+        store.log("settings", "duress code set")
+        print("✅ Duress code saved.")
+    elif cmd == "duress-clear":
+        duress.clear_code(store)
+        store.log("settings", "duress code removed")
+        print("✅ Duress code removed.")
+    elif cmd == "duress-delay" and len(args) == 1:
+        seconds = durations.parse(args[0])
+        if seconds < 60:
+            raise SystemExit("The minimum is 1 minute.")
+        store.set("duress_delay", seconds)
+        print(f"✅ Saved: delivery {fmt(seconds)} after the duress code.")
     elif cmd == "request" and len(args) == 1:
         print(request(store, args[0]))
     else:

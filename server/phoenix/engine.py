@@ -17,7 +17,7 @@ import time
 from collections.abc import Awaitable, Callable
 from datetime import date
 
-from . import state
+from . import duress, state
 from .config import Config
 from .crypto import Crypto
 from .db import Store
@@ -44,12 +44,19 @@ class Engine:
         self.store = store
         self.account = account
         self.crypto = crypto
-        self.notify = notify  # notify(text, keyboard=None | "checkin" | "review")
+        self._notify = notify  # notify(text, keyboard=None | "checkin" | "review")
         self._task: asyncio.Task | None = None
         self._stop = False
         self._loaded: Loaded | None = None
         self._loaded_sig: str | None = None
         self._requests: asyncio.Task | None = None
+
+    async def notify(self, text: str, keyboard: str | None = None) -> None:
+        """Message the owner, except during a silent alarm: then the bot must look as if nothing happened."""
+        if state.silent(self.store):
+            log.info("silent alarm, not sent: %s", text.splitlines()[0][:80])
+            return
+        await self._notify(text, keyboard=keyboard)
 
     # ------------------------------------------------------------------ views
     @property
@@ -115,13 +122,26 @@ class Engine:
         if self.phase in ("triggered", "done"):
             return False
         self.store.set("panic_at", time.time())
+        self.store.delete("panic_due")
         self.store.log("panic", "panic button pressed")
         return True
 
+    def duress(self) -> None:
+        """The duress code was sent: start the panic delivery quietly, after the duress delay."""
+        s, now = self.store, time.time()
+        if state.silent(s):
+            return
+        s.set("silent_since", now)
+        if self.phase not in ("triggered", "done"):
+            s.set("panic_at", now)
+            s.set("panic_due", now + duress.delay(s))
+        s.log("duress", f"silent alarm: delivery in {fmt(duress.delay(s))}")
+
     def cancel_panic(self) -> bool:
-        if self.store.get("panic_at") is None:
+        if self.store.get("panic_at") is None and not state.silent(self.store):
             return False
-        self.store.delete("panic_at")
+        for key in ("panic_at", "panic_due", "silent_since"):
+            self.store.delete(key)
         self.store.log("panic", "panic cancelled")
         return True
 
@@ -278,11 +298,12 @@ class Engine:
                 self._start("live")
             return
 
-        panic_at = s.get("panic_at")
-        if panic_at is not None:
-            if now >= panic_at + s.setting("panic_delay"):
+        panic_due = state.panic_due(s)
+        if panic_due is not None:
+            if now >= panic_due:
                 s.delete("panic_at")
-                await self._trigger("panic", "panic button")
+                s.delete("panic_due")
+                await self._trigger("panic", "duress code" if state.silent(s) else "panic button")
             return
 
         pause = s.get("pause_until")
@@ -404,7 +425,8 @@ class Engine:
         s.delete_prefix("backup:")
         s.delete_prefix("hold:")
         s.clear_autoreplied()
-        for key in ("next_run", "waiting", "progress_notified", "last_failure_report", "trigger_kind", "triggered_at"):
+        for key in ("next_run", "waiting", "progress_notified", "last_failure_report", "trigger_kind", "triggered_at",
+                    "silent_since", "panic_at", "panic_due"):
             s.delete(key)
         s.set("phase", "armed")
         self.checkin()
