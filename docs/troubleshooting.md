@@ -43,6 +43,9 @@ When something fails, Phoenix shows a line starting with ❌ that says what went
 | "Phoenix is not running on the server" | Server → Restart Phoenix. If it stops again, look at Server → Live server logs. |
 | "Cannot connect to the server" | Is the server running and paid? Is your internet working? |
 | Bot reports "Telegram account problem" | The session was logged out: Server → Log in to Telegram again. |
+| "Weekly self-check found problems" | Each line says who can't be found or which file is damaged. Fix the recipient's Telegram (Recipients → them → Settings), then upload again. |
+| "Telegram deletes your account after … days" | In Telegram: Settings → Privacy and Security → "If away for" → the longest period. |
+| A time capsule didn't arrive | The server must run on that date; check 📜 History. If its recipient can't be found, Phoenix retries every 30 minutes and tells you. |
 | "Not uploaded. Fix these first" | Each line names the person, the item and what to do. |
 | `❌ cannot find @someone` in the recipient check | Check the username with its `t.me` link. Phone numbers must be saved in your Telegram contacts. |
 | "Could not lock the vault" | Close file manager windows and terminals that are inside the vault folder, then run `phoenix lock`. |

@@ -84,6 +84,10 @@ If Telegram refuses to schedule (for example, too many scheduled messages in one
 
 Messages scheduled by Phoenix show up in each chat's **Scheduled messages** list in your Telegram after a trigger. **Stop the delivery** deletes them again.
 
+## Time capsules
+
+Time capsules live next to the packages (`_capsules/` on your computer and on the server) and use the same encrypted format, with one date for everything. The server checks every minute whether one is due and sends it then, whatever the switch is doing. It holds the capsule itself instead of handing it to Telegram's scheduler, so nothing appears in your Telegram before the date. Messages Phoenix sends this way don't count as your activity.
+
 ## Backup people
 
 From the moment a package's first item was due, Phoenix waits `backup_after` (7d by default) and then checks whether the person has read the chat. If they haven't, or if they couldn't be found in Telegram at all, the same package goes to the backup person, starting with a short note.
@@ -104,7 +108,9 @@ The server also:
 - reminds you 30, 14 and 7 days before the hosting paid-until date;
 - asks every 90 days whether your packages are still up to date;
 - tells you when packages change, with the result of the recipient check;
-- optionally pings a [healthchecks.io](https://healthchecks.io) URL every minute, so you get an email if the server goes down.
+- optionally pings a [healthchecks.io](https://healthchecks.io) URL every minute, so you get an email if the server goes down;
+- runs a weekly self-check: resolves every recipient again and decrypts the start of every uploaded file;
+- warns if Telegram's account self-destruct period is under a year.
 
 ## Packages on disk
 

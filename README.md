@@ -70,11 +70,15 @@ Every interval can be changed. → [How it works in detail](docs/how-it-works.md
 - 🚨 **Two triggers:** silence, and a panic button. Each package chooses which one sends it.
 - 🤫 **Duress code:** a phrase that looks like an ordinary check-in, but quietly starts the panic delivery while the bot keeps showing a normal status.
 - 👤 **Account actions:** a one-time auto-reply to people who write to you, a new profile bio, and posts to groups or channels.
+- ⏳ **Time capsules:** messages that go out on a date you choose, whatever happens: to someone on their 18th birthday, or to yourself in five years.
+- 🗓 **Timeline:** one screen shows what goes out, to whom and when.
+- 🧭 **Letter guide:** a few questions help you write what matters; only your answers go into the letter.
 - 🧪 **Rehearsal:** sends everything to your own Saved Messages, exactly as your people would receive it.
 - ⏹ **Undo:** stops a delivery, cancels messages already scheduled in Telegram and restores your bio.
 - 🔐 **Encryption:** packages are encrypted on your computer before upload, and kept in an encrypted vault on your computer.
 - 🛟 **Safety nets:**
-  - warnings if the Telegram session dies;
+  - a weekly self-check: every recipient can still be found and every file can still be decrypted;
+  - warnings if the Telegram session dies, or if Telegram could delete your account before delivery;
   - hosting payment reminders;
   - "are your packages still up to date?" prompts;
   - no firing right after the server was down;
@@ -164,6 +168,7 @@ Telegram ✅ logged in as Alex (@alex) · 3 package(s) on the server
 What do you want to do?
 ❯ ✅ I'm OK: check in
   📦 Recipients and what they receive
+  🗓 Timeline: what goes out, and when
   👤 Your account after the trigger: auto-reply, bio, posts
   ⬆️ Upload changes to the server
   🧪 Rehearsal: send everything to my Saved Messages
@@ -171,6 +176,7 @@ What do you want to do?
   ⏸ Pause: going offline for a while
   ⏱ Timers and reminders
   🚨 Panic button
+  ⏳ Time capsules: messages for a future date
   🤫 Duress code: a silent alarm
   📜 History
   🖥 Server

@@ -3,6 +3,8 @@
 - [The menu](#the-menu)
 - [Checking in](#checking-in)
 - [Packages](#packages)
+- [Timeline](#timeline)
+- [Time capsules](#time-capsules)
 - [Your account after the trigger](#your-account-after-the-trigger)
 - [Upload, check, rehearse](#upload-check-rehearse)
 - [Timers and reminders](#timers-and-reminders)
@@ -64,7 +66,7 @@ Choose a person to see what they'll receive, in order, and what you can do:
 
 | Action | What it does |
 |---|---|
-| ✍️ **Write a message** | Type or paste text right in the terminal. To finish, press Enter on two empty lines in a row. Long messages are split automatically. |
+| ✍️ **Write a message** | Type or paste text right in the terminal, or let the **guide** ask you a few questions (see below). To finish a text, press Enter on two empty lines in a row. Long messages are split automatically. |
 | 📎 **Add files** | **Drag** files or folders from your file manager into the terminal window (this pastes their paths), then press Enter. |
 | 📝 **Edit a message** | Opens it in a text editor (`nano` by default: save with Ctrl+O, Enter; exit with Ctrl+X). |
 | 🗑 **Remove something** | Removes one item from the list. |
@@ -102,12 +104,51 @@ Items are sent in the order shown in the list.
 | **Wait after the trigger** | Hold the whole package back for a while, e.g. `3d`. |
 | **Backup person** | If they haven't read the package within the time you choose (default 7 days), or can't be found at all, the same package goes to the backup person. It starts with a short note explaining why; you can write your own note. |
 
+### The letter guide
+
+When you write a message, you can choose **🧭 With a guide**. Phoenix asks a few questions, one at a time:
+
+1. what happened;
+2. something personal;
+3. what to do first;
+4. where things are;
+5. who to contact;
+6. anything else.
+
+Answer in your own words and language, and skip any question you like. **Only your answers go into the letter**, one paragraph each; the questions don't. You see the whole letter before it's saved, and can edit it later.
+
 ### Writing tips
 
 - **The first message should explain what is happening,** for example: *"If you're reading this, something has happened to me. This was sent automatically; I prepared it in advance."*
 - **For anything that needs action, write concrete steps:** where to log in, what to do first, who to contact.
 - **Passwords:** consider giving access to a password manager (many have an "emergency access" feature) instead of listing every password. Delivered messages sit in an ordinary Telegram chat.
 - **Review your packages now and then.** Phoenix reminds you every 90 days.
+
+## Timeline
+
+**🗓 Timeline: what goes out, and when** shows, for a trigger by silence or by the panic button, everything that would happen, in order:
+
+```
+  right away   Auto-reply turns on for people who write to you
+               Mom: 2 messages, 1 file
+  after 1d     Post to @family
+  after 3d     Alex: 1 message
+  after 7d     Mom: if it isn't read by then, the same goes to @dad (backup)
+  after 1y     Mom: 1 message
+```
+
+Time capsules are listed below it, with their dates.
+
+## Time capsules
+
+A **time capsule** is a message that goes out on a date you choose, **whatever happens**, with or without a trigger. For example, a letter to your child on their 18th birthday, or to yourself in five years.
+
+Open **⏳ Time capsules → ➕ New time capsule**, give it a name, choose who it's for (yourself, in your Saved Messages, or anyone else) and the date; then write messages and add files, just like for a recipient. Upload, and the capsule waits, encrypted, on your server until its date. It doesn't show up anywhere in your Telegram before then, so it can't be sent or deleted by accident.
+
+- The server must still be running and paid on that date.
+- A capsule is not a sign of life: sending it doesn't count as a check-in.
+- Delete a capsule and upload, and it won't be sent.
+- The rehearsal and the recipient check include your capsules.
 
 ## Your account after the trigger
 
@@ -182,6 +223,12 @@ Packages and account actions set to run **on panic** are what's sent. Keep in mi
 - A changed bio is visible to anyone.
 - The bot never mentions the duress code, not even in `/help` or `/settings`.
 
+## Self-check and warnings
+
+Once a week, the server checks on its own that every recipient, backup person, post chat and capsule recipient can still be found in Telegram, and that every uploaded file can still be decrypted. It writes to you **only when something breaks** (a deleted account, a changed username, a damaged file), and once more when it's fixed. The result of the last check is in **📋 Full status** and in `/status`; problems also show at the top of the menu.
+
+The server also warns you if Telegram's **"If away for"** setting (how long before Telegram deletes an inactive account) is under a year: a deleted account delivers nothing.
+
 ## The control bot
 
 Day to day you can do everything from Telegram. The bot ignores everyone except you.
@@ -234,7 +281,7 @@ If the menu says **"The server runs an older Phoenix"**, you updated your comput
 
 ## Backups
 
-- **Your packages** live in the vault on your computer: `~/.local/share/phoenix/vault`. Early versions kept it inside the Phoenix folder; the menu moves it there automatically. Copy that folder anywhere: a USB stick, the cloud. Without your password or **master key** it's unreadable. Keep the master key on paper.
+- **Your packages** live in the vault on your computer: `~/.local/share/phoenix/vault`. Early versions kept it inside the Phoenix folder; the menu moves it there automatically. To back it up, choose **🔐 Vault → 💾 Back up the vault**: pick a USB stick (Phoenix lists the ones plugged in) or any folder. The copy stays encrypted and is checked after copying; a `HOW-TO-RESTORE.txt` next to it explains how to use it on a new computer. Without your password or **master key** it's unreadable. Keep the master key on paper.
 - **The server** is not backed up by Phoenix, and doesn't need to be. If it's lost while you're alive, choose 🚚 Move Phoenix to another server: the setup runs again and your packages are uploaded from your computer.
 
 ## Uninstalling

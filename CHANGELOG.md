@@ -2,6 +2,19 @@
 
 All notable changes to Phoenix. Versions follow [semantic versioning](https://semver.org); dates are YYYY-MM-DD.
 
+## 1.1.0 — 2026-10-15
+
+### Added
+- **Time capsules:** messages that go out on a date you choose, whatever happens: to someone on a future birthday, or to yourself in years. They wait encrypted on your server and don't count as signs of life.
+- **Timeline:** one screen with everything that goes out after a trigger, and when, plus your time capsules.
+- **Letter guide:** a few questions help you write a letter; only your answers go into it, in your own language.
+- **Weekly self-check:** the server makes sure every recipient can still be found and every file can still be decrypted, and tells you only when something breaks or is fixed.
+- **Account deletion warning** when Telegram's "If away for" period is under a year.
+- **Vault backup** to a USB stick or any folder, checked after copying, with restore instructions.
+
+### Fixed
+- Deleted Telegram accounts are recognized as "can't be found" instead of looking fine.
+
 ## 1.0.0 — 2026-10-15
 
 The first release.
