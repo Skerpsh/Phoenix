@@ -1,0 +1,15 @@
+# Tooling only: Phoenix is not installed as a package (see README → Installation).
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-include = ["cli/phoenix"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E501"]  # long user-facing strings read better unwrapped
+
+[tool.ruff.lint.isort]
+known-first-party = ["phoenix", "phx", "helpers"]

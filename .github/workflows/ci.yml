@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: Lint and test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"  # the server's Python (server/Dockerfile)
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - name: System tools
+        run: sudo apt-get update && sudo apt-get install -y age rsync shellcheck
+      - run: pip install -r requirements-dev.txt
+      - run: ruff check .
+      - run: shellcheck install.sh deploy/bootstrap.sh
+      - run: pytest -v
+
+  cli:
+    name: CLI on Python ${{ matrix.python }}
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        python: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: The CLI uses only the standard library
+        run: |
+          python -m compileall -q cli
+          python cli/phoenix --help
+          python -c "import sys; sys.path[:0] = ['cli', 'server']; import phx.screens, phx.main"
+
+  docker:
+    name: Server image
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t phoenix-server server
+      - run: docker run --rm phoenix-server python -c "import phoenix.main, phoenix.ctl, phoenix.login, phoenix.logout"

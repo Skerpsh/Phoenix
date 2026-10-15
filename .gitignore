@@ -4,3 +4,5 @@ packages/
 __pycache__/
 vault/
 .venv/
+.pytest_cache/
+.ruff_cache/
