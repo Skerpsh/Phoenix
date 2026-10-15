@@ -109,24 +109,29 @@ cd {ROOT / "server"} && sh -c "$cmd"
 
     answers = [
         "1",                         # I'm OK
-        "8", "1", "5d", "",          # Timers → check in every 5d → back
-        "7", "2w",                   # Pause for 2 weeks
-        "7",                         # End the pause
+        "9", "1", "5d", "",          # Timers → check in every 5d → back
+        "8", "2w",                   # Pause for 2 weeks
+        "8",                         # End the pause
         "2", "1", "Mom", "mom_test",  # Recipients → add
-        "1", "Hi mom", "", "", "1",  # write a message, send together with the rest
+        "1", "1", "Hi mom", "", "", "1",  # write a message myself, send together with the rest
         "", "",                      # back, back
-        "3", "1", "Bye", "", "", "",  # account → auto-reply → back
-        "4", "",                     # upload
-        "10", "1", "all good", "all good", "",  # duress code → set it (typed twice) → back
-        "11", "",                    # history
-        "14",                        # quit
+        "4", "1", "Bye", "", "", "",  # account → auto-reply → back
+        "11", "1", "Future me", "1", "2099-01-01",  # time capsules → new → to myself, on a date
+        "1", "1", "Hello future", "", "",  # write a message in it (no scheduling question)
+        "", "",                      # back, back
+        "3", "1", "",                # timeline if I stop checking in
+        "5", "",                     # upload
+        "12", "1", "all good", "all good", "",  # duress code → set it (typed twice) → back
+        "13", "",                    # history
+        "16",                        # quit
     ]
     r = subprocess.run([sys.executable, str(ROOT / "cli" / "phoenix")], input="\n".join(answers) + "\n",
                        env=env, capture_output=True, text=True, timeout=120)
     out = r.stdout + r.stderr
     assert r.returncode == 0, out
     for expected in ["Check-in recorded", "Saved: 5d", "Paused for 14d", "Pause ended", "Added Mom",
-                     "Message saved", '"Bye"', "Uploaded", "check-in from the CLI"]:
+                     "Message saved", '"Bye"', "Uploaded", "check-in from the CLI", "Mom: 1 message",
+                     "Auto-reply turns on", "time capsule “Future me” → me", "on 2099-01-01 at 09:00"]:
         assert expected in out, f"{expected!r} missing in:\n{out}"
     from phx import art
     assert any(phrase in out for phrase in art.FAREWELLS), "a farewell phrase on the way out"
