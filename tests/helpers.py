@@ -14,7 +14,7 @@ def push_locally(packages: Path, public_key: str, server_data: Path) -> None:
     pk.rsync = local_rsync
     pk.ssh = lambda cfg, command, **kw: subprocess.run(["sh", "-c", f"cd {server_data.parent} && {command}"])
     try:
-        cfg = {"server": "local", "remote_dir": str(server_data.parent), "public_key": public_key}
+        cfg = {"server": "local", "remote_dir": str(server_data.parent), "public_key": public_key, "name_salt": "test-salt"}
         pk.push_from(cfg, packages)
     finally:
         pk.rsync, pk.ssh = original_rsync, original_ssh
