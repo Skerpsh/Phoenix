@@ -378,6 +378,8 @@ def explain(text: str) -> None:
 def ask_secret(question: str, *, keep: bool = False) -> str:
     import getpass
 
+    if not INTERACTIVE:  # piped input (scripts, tests): read it like any other answer
+        return input(f"{question}: ").strip()
     return getpass.getpass(f"{question}{' [Enter keeps the current one]' if keep else ''} (hidden): ").strip()
 
 

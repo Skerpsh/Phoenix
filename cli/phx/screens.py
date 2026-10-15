@@ -129,8 +129,8 @@ class App:
         self._stack = contextlib.ExitStack()
         self._root = None
 
-    def ctl(self, *args: str) -> str:
-        return core.ctl(self.cfg, *args)
+    def ctl(self, *args: str, input: str | None = None) -> str:
+        return core.ctl(self.cfg, *args, input=input)
 
     def run(self, action) -> None:
         try:

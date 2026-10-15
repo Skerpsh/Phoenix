@@ -117,6 +117,7 @@ cd {ROOT / "server"} && sh -c "$cmd"
         "", "",                      # back, back
         "3", "1", "Bye", "", "", "",  # account → auto-reply → back
         "4", "",                     # upload
+        "10", "1", "all good", "all good", "",  # duress code → set it (typed twice) → back
         "11", "",                    # history
         "14",                        # quit
     ]
@@ -130,6 +131,12 @@ cd {ROOT / "server"} && sh -c "$cmd"
     from phx import art
     assert any(phrase in out for phrase in art.FAREWELLS), "a farewell phrase on the way out"
     assert (home / "packages" / "Mom" / "01-message.txt").read_text() == "Hi mom\n"
+
+    from phoenix import duress
+    from phoenix.db import Store
+    store = Store(data / "phoenix.db")
+    assert "Duress code saved" in out
+    assert duress.is_code(store, "All Good") and not duress.is_code(store, "all good!")
 
 
 def test_legacy_vault_moves_out_of_the_code(tmp_path, monkeypatch):
