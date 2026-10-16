@@ -3,6 +3,8 @@ so a broken bot token or an unreachable Bot API can never stop Phoenix from watc
 
 import asyncio
 import logging
+import shutil
+import signal
 import time
 
 from aiogram import Bot, Dispatcher
@@ -59,12 +61,15 @@ async def run_bot(bot: Bot, dp: Dispatcher, store: Store) -> None:
 
 async def watch_bot(store: Store, notify) -> None:
     while True:
-        conflict = store.get("bot_conflict_at")
-        if conflict and time.time() - conflict < 300 and \
-                time.time() - store.get("bot_conflict_notified", 0) > CONFLICT_NOTICE_EVERY:
-            store.set("bot_conflict_notified", time.time())
-            store.log("bot", "another program is reading the bot")
-            await notify(CONFLICT_TEXT)
+        try:
+            conflict = store.get("bot_conflict_at")
+            if conflict and time.time() - conflict < 300 and \
+                    time.time() - store.get("bot_conflict_notified", 0) > CONFLICT_NOTICE_EVERY:
+                store.set("bot_conflict_notified", time.time())
+                store.log("bot", "another program is reading the bot")
+                await notify(CONFLICT_TEXT)
+        except Exception:
+            log.exception("watching the bot failed")
         await asyncio.sleep(60)
 
 
@@ -77,6 +82,10 @@ async def main() -> None:
     if not cfg.identity_path.exists():
         raise SystemExit("No encryption key yet (on your computer: phoenix → Server → Update Phoenix)")
     cfg.packages_dir.mkdir(parents=True, exist_ok=True)
+    # Files are decrypted here only while they're being sent; anything left over is from a crash or a power cut.
+    shutil.rmtree(cfg.tmp_dir, ignore_errors=True)
+    # `docker compose stop` sends SIGTERM: stop through the normal path, so temporary files get removed.
+    asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, asyncio.current_task().cancel)
 
     store = Store(cfg.db_path)
     account = Account(cfg)
@@ -126,4 +135,7 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except asyncio.CancelledError:  # SIGTERM
+        log.info("stopped")

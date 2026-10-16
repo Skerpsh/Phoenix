@@ -1,5 +1,6 @@
 """Your personal Telegram account (via Telethon) — used to deliver packages."""
 
+import time
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -10,6 +11,7 @@ from .config import Config
 
 MESSAGE_LIMIT = 4000
 TELEGRAM_SERVICE_ID = 777000  # the official "Telegram" account (login codes, notices)
+OWN_ECHO = 10  # seconds: Telegram reports Phoenix's own messages back as outgoing ones; they're not you
 
 
 class ScheduleRejected(Exception):
@@ -56,6 +58,12 @@ class Account:
         # Always wait out flood limits instead of failing a delivery.
         self.client.flood_sleep_threshold = 24 * 3600
         self.ttl_days: int | None = None  # "delete my account if away for", from the last health check
+        self._sending = 0
+        self._sent_at = 0.0
+
+    @property
+    def connected(self) -> bool:
+        return self.client.is_connected()
 
     async def connect(self) -> None:
         await self.client.connect()
@@ -97,6 +105,7 @@ class Account:
     ) -> list[int]:
         """Send now, or hand to Telegram's own scheduler when `schedule` (unix time) is given."""
         when = datetime.fromtimestamp(schedule, UTC) if schedule else None
+        self._sending += 1
         try:
             if text is not None:
                 ids = []
@@ -109,6 +118,13 @@ class Account:
             return [m.id]
         except (errors.ScheduleTooMuchError, errors.ScheduleDateTooLateError) as e:
             raise ScheduleRejected(str(e)) from e
+        finally:
+            self._sending -= 1
+            self._sent_at = time.monotonic()
+
+    def own_echo(self) -> bool:
+        """True while an outgoing message is most likely one Phoenix itself just sent."""
+        return self._sending > 0 or time.monotonic() - self._sent_at < OWN_ECHO
 
     async def delete_scheduled(self, user_id: int, ids: list[int]) -> None:
         peer = await self.client.get_input_entity(user_id)
@@ -134,7 +150,8 @@ class Account:
     # ----------------------------------------------------------------- events
     def on_outgoing(self, callback: Callable[[], None]) -> None:
         async def handler(event):
-            callback()
+            if not self.own_echo():
+                callback()
 
         self.client.add_event_handler(handler, events.NewMessage(outgoing=True))
 

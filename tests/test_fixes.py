@@ -28,6 +28,7 @@ def test_move_stops_the_old_server_first(monkeypatch):
     monkeypatch.setattr(core, "save_config", lambda cfg: None)
     monkeypatch.setattr(core, "stop", lambda cfg: calls.append(("stop", cfg["server"])) or True)
     monkeypatch.setattr(core, "uninstall", lambda cfg: calls.append(("uninstall", cfg["server"])))
+    monkeypatch.setattr(core, "ctl", lambda cfg, *args, **kw: calls.append((args[0], cfg["server"])) or "{}")
     monkeypatch.setattr(ui, "confirm", lambda *a, **kw: True)
     monkeypatch.setattr(ui, "pause", lambda: None)
     monkeypatch.setattr(pk, "push_from", lambda cfg, root: calls.append(("push", cfg["server"])))
@@ -40,7 +41,8 @@ def test_move_stops_the_old_server_first(monkeypatch):
 
     monkeypatch.setattr(app, "setup", setup)
     app.move()
-    assert calls == [("stop", "root@old"), ("setup", "root@old"), ("push", "root@new"), ("uninstall", "root@old")]
+    assert calls == [("export-state", "root@old"), ("stop", "root@old"), ("setup", "root@old"),
+                     ("import-state", "root@new"), ("push", "root@new"), ("uninstall", "root@old")]
 
 
 # 2. A mistyped time zone can never stop a delivery, and it's reported.
@@ -284,8 +286,10 @@ def test_interrupted_move_can_go_back(monkeypatch):
     monkeypatch.setattr(core, "save_config", lambda cfg: None)
     monkeypatch.setattr(core, "stop", lambda cfg: True)
     monkeypatch.setattr(core, "restart", lambda cfg: calls.append(("restart", cfg["server"])))
+    monkeypatch.setattr(core, "ctl", lambda cfg, *args, **kw: "{}")
     monkeypatch.setattr(ui, "confirm", lambda *a, **kw: True)
     monkeypatch.setattr(app, "setup", lambda: app.cfg.update(server="root@new") or False)
     app.move()
     assert calls == [("restart", "root@old")]
     assert app.cfg["server"] == "root@old" and app.cfg["public_key"] == "age1old"
+    assert "moving_state" not in app.cfg

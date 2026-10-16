@@ -44,6 +44,8 @@ TIMERS = [
 ]
 
 KIND_ICONS = {"text": "💬", "voice": "🎤", "round": "⭕", "file": "📎"}
+LOST_SETTINGS = ("Your timers, duress code, pause and paid-until date stay behind: set them again on the new server "
+                 "(⏱ Timers and reminders, 🤫 Duress code, 🖥 Server).")
 TELEGRAM_QUESTION = "Their Telegram (@username, a t.me link, or +phone saved in your contacts)"
 
 
@@ -434,6 +436,8 @@ class App:
 
     # ---------------------------------------------------------------- main menu
     def main(self, start: str | None = None) -> None:
+        if "moving_state" in self.cfg:  # a move whose setup was finished in a later session
+            self.run(self.take_over_settings)
         if start == "new":
             self.run(lambda: self.open_recipient(self.new_recipient()))
         elif start == "account":
@@ -1040,11 +1044,19 @@ class App:
                           "two never run at the same time: they would share your bot, and the old one could miss your "
                           "check-ins and deliver by mistake.", yes="🚚 Yes, move it"):
             return
+        try:  # your timers, duress code, pause and paid-until date move along
+            self.cfg["moving_state"] = json.loads(core.ctl(old, "export-state"))
+        except (Failed, json.JSONDecodeError) as e:
+            self.cfg.pop("moving_state", None)
+            if not ui.confirm(f"⚠️ Your settings can't be read from {old['server']} ({e}). {LOST_SETTINGS} "
+                              "Continue anyway?", yes="Continue", no="Cancel"):
+                return
         print(f"Stopping Phoenix on {old['server']}…")
         if not core.stop(old):
             if not ui.confirm(f"⚠️ {old['server']} can't be reached, so it couldn't be stopped. If it comes back while "
                               "the new server runs, both will watch your bot and the old one may deliver by mistake. "
-                              "Delete it at your hosting provider. Continue anyway?", yes="Continue", no="Cancel"):
+                              "Delete it at your hosting provider, and in Telegram → Settings → Devices end its "
+                              "session. Continue anyway?", yes="Continue", no="Cancel"):
                 return
         self.cfg["setup"] = []
         self.cfg.pop("public_key", None)
@@ -1054,10 +1066,12 @@ class App:
                           "there again?", yes="Yes, go back", no="No, I'll finish the move later", default=True):
                 self.cfg.clear()
                 self.cfg.update(old)
+                self.cfg.pop("moving_state", None)
                 core.save_config(self.cfg)
                 core.restart(self.cfg)
                 ui.note(f"🔄 Back on {old['server']}; Phoenix runs there again.")
             return
+        self.take_over_settings()
         print("Uploading your packages to the new server…")
         pk.push_from(self.cfg, self.root())
         if old.get("server") != self.cfg.get("server") and ui.confirm(
@@ -1066,11 +1080,26 @@ class App:
             default=True,
         ):
             try:
-                core.uninstall(old)
+                warning = core.uninstall(old)
                 print(f"✅ Removed from {old['server']}. You can cancel that server at your hosting provider.")
+                if warning:
+                    print(f"⚠️ {warning}")
             except Failed as e:
                 print(f"⚠️ Could not remove it ({e}). It's stopped; delete it at your hosting provider.")
         ui.pause()
+
+    def take_over_settings(self) -> None:
+        """After a move: put the old server's timers, duress code, pause and paid-until date on the new one."""
+        state = self.cfg.get("moving_state")
+        if state is None:
+            return
+        try:
+            print(self.ctl("import-state", input=json.dumps(state)))
+        except Failed as e:
+            print(f"⚠️ Could not take over your settings ({e}). {LOST_SETTINGS}")
+            return
+        self.cfg.pop("moving_state", None)
+        core.save_config(self.cfg)
 
     def uninstall(self) -> None:
         if not ui.confirm(f"Remove Phoenix from {self.cfg['server']}? It logs out of your Telegram account and deletes "
@@ -1079,12 +1108,14 @@ class App:
             return
         if not ui.confirm("Are you sure? This can't be undone.", yes="Yes, I'm sure", no="No"):
             return
-        core.uninstall(self.cfg)
+        warning = core.uninstall(self.cfg)
         self.cfg["setup"] = []
         self.cfg.pop("public_key", None)
         core.save_config(self.cfg)
         print("\n✅ Removed. Your packages on this computer are kept.\n"
               "Also delete the control bot in @BotFather (/deletebot) if you don't need it any more.")
+        if warning:
+            print(f"⚠️ {warning}")
         ui.pause()
         raise Restart
 

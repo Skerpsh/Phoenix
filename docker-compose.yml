@@ -7,6 +7,11 @@ services:
         required: false
     volumes:
       - ./data:/data
+    # Phoenix needs no special powers inside its container: if it's ever broken into, it gets none either.
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     logging:
       driver: json-file
       options:

@@ -51,3 +51,10 @@ jobs:
       - uses: actions/checkout@v5
       - run: docker build -t phoenix-server server
       - run: docker run --rm phoenix-server python -c "import phoenix.main, phoenix.ctl, phoenix.login, phoenix.logout"
+      - name: Works without capabilities, as docker-compose.yml runs it
+        run: |
+          sudo mkdir -m 700 /tmp/phoenix-data
+          docker run --rm --cap-drop ALL --security-opt no-new-privileges:true -v /tmp/phoenix-data:/data \
+            phoenix-server python -m phoenix.keygen | grep -q '^age1'
+          docker run --rm --cap-drop ALL --security-opt no-new-privileges:true -v /tmp/phoenix-data:/data \
+            phoenix-server python -m phoenix.ctl summary | grep -q '"protocol"'

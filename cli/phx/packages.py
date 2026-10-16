@@ -22,6 +22,7 @@ ACCOUNT_TOML = "_account.toml"
 CAPSULES_DIR = "_capsules"  # time capsules: one folder each, sent on their date whatever happens
 CAPSULE_FILE = ".capsule.toml"
 ACCOUNT_BLOB = "_account.json.age"
+SALT_FILE = ".phoenix-name-salt"  # with the packages (in the vault), so a vault backup keeps the names stable
 STAGING = CACHE / "staging"
 PUSHED = CACHE / "pushed"  # fingerprint of the packages as last uploaded
 TEXT_SUFFIXES = {".txt", ".md"}
@@ -394,6 +395,21 @@ def is_uploaded(root: Path) -> bool:
     return PUSHED.exists() and PUSHED.read_text() == tree_signature(root)
 
 
+def name_salt(cfg: dict, packages_dir: Path) -> str:
+    """Names on the server are hashed with a secret that never leaves this computer, so a folder called
+    "mom" can't be recognized by hashing likely names. It's kept next to the packages (inside the vault), so a
+    restored vault gives the same names on the server, and nothing already delivered is sent again."""
+    f = packages_dir / SALT_FILE
+    salt = f.read_text().strip() if f.exists() else ""
+    if not salt:
+        salt = cfg.get("name_salt") or secrets.token_hex(16)
+        f.write_text(salt + "\n")
+    if cfg.get("name_salt") != salt:
+        cfg["name_salt"] = salt
+        save_config(cfg)
+    return salt
+
+
 def push_from(cfg: dict, packages_dir: Path) -> None:
     need("age", "rsync")
     public_key = cfg.get("public_key")
@@ -418,12 +434,7 @@ def push_from(cfg: dict, packages_dir: Path) -> None:
     if problems:
         raise Problems(problems)
 
-    # Names on the server are hashed with a secret that never leaves this computer, so a folder called
-    # "mom" can't be recognized by hashing likely names.
-    if not cfg.get("name_salt"):
-        cfg["name_salt"] = secrets.token_hex(16)
-        save_config(cfg)
-    salt = cfg["name_salt"]
+    salt = name_salt(cfg, packages_dir)
 
     STAGING.mkdir(parents=True, exist_ok=True)
     cache_path = STAGING.parent / "cache.json"

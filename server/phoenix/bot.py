@@ -288,7 +288,7 @@ def build_router(engine: Engine, owner_id: int) -> Router:
 
     @r.message(Command("log"))
     async def log_(m: Message):
-        await m.answer(events_text(engine.store))
+        await m.answer(events_text(engine.store, tz=engine.cfg.tz))
 
     @r.message()
     async def anything(m: Message):

@@ -15,7 +15,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from datetime import date
+from datetime import date, datetime
 
 from . import duress, state
 from .config import Config
@@ -36,6 +36,8 @@ MIN_ACCOUNT_TTL = 365  # days: below this, warn that Telegram may delete the acc
 REQUEST_POLL = 1
 ACTIVITY_THROTTLE = 5 * 60
 REVIEW_REPEAT = 7 * 86400
+ABORT_WAIT = 60  # then the item being sent is cut off: a stop must stop
+RESPONSE_KEEP = 3600  # answers nobody picked up (the menu gave up waiting) are dropped after this
 
 Notify = Callable[..., Awaitable[None]]
 
@@ -221,10 +223,10 @@ class Engine:
     async def _resolve(self, key: str, ref: str) -> tuple[bool, str]:
         try:
             user_id, label = await self.account.resolve(ref)
-            self.store.set_target(key, user_id, label)
-            return True, label
         except Exception as e:
             return False, str(e)
+        self.store.set_target(key, ref, user_id, label)
+        return True, label
 
     async def autoreply(self, user_id: int, sender) -> None:
         """Called for private messages people send you."""
@@ -246,16 +248,27 @@ class Engine:
     async def _serve_requests(self) -> None:
         """Actions the CLI asks for over SSH (`phoenix.ctl request ...`) that need the Telegram connection."""
         while True:
-            for key in self.store.keys("request:"):
-                cmd = self.store.get(key)
-                self.store.delete(key)
-                try:
-                    text = await self.handle_request(cmd)
-                except Exception as e:
-                    log.exception("request %s failed", cmd)
-                    text = f"❌ {type(e).__name__}: {e}"
-                self.store.set("response:" + key.removeprefix("request:"), text)
+            try:
+                await self._serve_pending()
+            except Exception:  # e.g. the database was busy: try again, never stop answering the menu
+                log.exception("serving requests failed")
             await asyncio.sleep(REQUEST_POLL)
+
+    async def _serve_pending(self) -> None:
+        s = self.store
+        for key in s.keys("request:"):
+            cmd = s.get(key)
+            s.delete(key)
+            try:
+                text = await self.handle_request(cmd)
+            except Exception as e:
+                log.exception("request %s failed", cmd)
+                text = f"❌ {type(e).__name__}: {e}"
+            s.set("response:" + key.removeprefix("request:"), {"text": text, "at": time.time()})
+        for key in s.keys("response:"):
+            answer = s.get(key)
+            if not isinstance(answer, dict) or time.time() - answer.get("at", 0) > RESPONSE_KEEP:
+                s.delete(key)
 
     async def handle_request(self, cmd: str) -> str:
         if cmd == "verify":
@@ -416,8 +429,8 @@ class Engine:
         await self.notify(
             f"🔥 TRIGGERED ({reason}). Delivering packages now.\nIf this is a mistake, send /abort immediately."
         )
-        await self._apply_profile(kind)
         self._start("live")
+        await self._apply_profile(kind)
 
     async def _apply_profile(self, kind: str) -> None:
         a = (await self.loaded()).actions
@@ -437,10 +450,12 @@ class Engine:
         s, problems = self.store, []
         self._stop = True
         if self.delivering:
-            try:
-                await asyncio.wait_for(asyncio.shield(self._task), timeout=900)
-            except Exception:
-                pass
+            await asyncio.wait([self._task], timeout=ABORT_WAIT)
+        if self.delivering:  # stuck on one item (a big upload, or Telegram making us wait): cut it off
+            self._task.cancel()
+            await asyncio.wait([self._task])
+            problems.append("an item was being sent when you stopped the delivery; it may still have reached "
+                            "its recipient")
         for peer, ids in s.scheduled_messages("live", time.time()).items():
             try:
                 await self.account.delete_scheduled(peer, ids)
@@ -543,7 +558,7 @@ class Engine:
             if now < first_due + p.backup_after:
                 continue
             read = False
-            user_id = s.get_target(p.hid)
+            user_id = s.get_target(p.hid, p.telegram)
             if user_id is not None:
                 try:
                     read = await self.account.was_read(user_id, first_due - 60)
@@ -581,7 +596,8 @@ class Engine:
     async def _check_health(self, force: bool = False) -> None:
         s = self.store
         now = time.time()
-        if not force and now - s.get("health_at", 0) < HEALTH_EVERY:
+        connected = getattr(self.account, "connected", True)
+        if not force and connected and now - s.get("health_at", 0) < HEALTH_EVERY:
             return
         ok, text = await self.account.health()
         was_ok = s.get("health_ok")
@@ -695,7 +711,7 @@ class Engine:
     async def _check_billing(self) -> None:
         s = self.store
         paid = s.get("paid_until")
-        today = date.today()
+        today = datetime.now(self.cfg.tz).date()
         if not paid or s.get("billing_notified") == today.isoformat():
             return
         left = (date.fromisoformat(paid) - today).days

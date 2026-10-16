@@ -270,7 +270,7 @@ Day to day you can do everything from Telegram. The bot ignores everyone except 
 | 🔑 Change the bot token or Telegram API keys | a new bot, new keys, a heartbeat URL |
 | 📱 Log in to Telegram again | the bot reports "Telegram account problem" |
 | 🛠 Prepare the server again | re-run step 2 of the setup (safe to repeat) |
-| 🚚 Move Phoenix to another server | stops Phoenix on the old server first, sets up the new one, uploads your packages, then offers to remove it from the old server |
+| 🚚 Move Phoenix to another server | stops Phoenix on the old server first, sets up the new one, takes your timers, duress code, pause and paid-until date along, uploads your packages, then offers to remove it from the old server |
 | 🧹 Remove Phoenix from this server | see [Uninstalling](#uninstalling) |
 
 ## Updating Phoenix

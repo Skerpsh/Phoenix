@@ -89,6 +89,10 @@ class Store:
             CREATE TABLE IF NOT EXISTS events (ts REAL NOT NULL, kind TEXT NOT NULL, text TEXT NOT NULL);
             """
         )
+        if "ref" not in {row[1] for row in self.db.execute("PRAGMA table_info(targets)")}:
+            # Older databases: the id was kept without what it was found from (cleared, so it's looked up again).
+            self.db.execute("DELETE FROM targets")
+            self.db.execute("ALTER TABLE targets ADD COLUMN ref TEXT NOT NULL DEFAULT ''")
 
     # --- key-value ---
     def get(self, key: str, default=None):
@@ -171,14 +175,17 @@ class Store:
         return out
 
     # --- resolved Telegram recipients ---
-    def set_target(self, package: str, user_id: int, label: str) -> None:
+    def set_target(self, package: str, ref: str, user_id: int, label: str) -> None:
         self.db.execute(
-            "INSERT OR REPLACE INTO targets (package, user_id, label, checked_at) VALUES (?, ?, ?, ?)",
-            (package, user_id, label, time.time()),
+            "INSERT OR REPLACE INTO targets (package, ref, user_id, label, checked_at) VALUES (?, ?, ?, ?, ?)",
+            (package, ref.strip(), user_id, label, time.time()),
         )
 
-    def get_target(self, package: str) -> int | None:
-        row = self.db.execute("SELECT user_id FROM targets WHERE package = ?", (package,)).fetchone()
+    def get_target(self, package: str, ref: str) -> int | None:
+        """The Telegram id found for this package, only while its recipient is still `ref`: after you change
+        who receives it, the old person's id must never be used again."""
+        row = self.db.execute("SELECT user_id FROM targets WHERE package = ? AND ref = ?",
+                              (package, ref.strip())).fetchone()
         return row[0] if row else None
 
     def target_ids(self) -> set[int]:

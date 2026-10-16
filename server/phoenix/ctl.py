@@ -18,6 +18,8 @@ from .packages import package_dirs
 from .state import PHASES, activity_enabled, deadline, events_text, panic_due, silent, status_text, trigger_eta
 
 REQUEST_TIMEOUT = 180
+# What moves with you to a new server (the menu's "Move Phoenix to another server"): your choices, not history.
+STATE_KEYS = ("activity", "paid_until", "duress", "duress_delay", "pause_until")
 
 
 def summary(store: Store, packages: int, problems: list[str] = ()) -> dict:
@@ -56,10 +58,45 @@ def request(store: Store, cmd: str) -> str:
         answer = store.get(f"response:{rid}")
         if answer is not None:
             store.delete(f"response:{rid}")
-            return answer
+            return answer["text"] if isinstance(answer, dict) else answer
         time.sleep(0.5)
+    if store.get(f"request:{rid}") is None:  # picked up, still running (Telegram may be making it wait)
+        raise SystemExit("Phoenix is still working on it (Telegram may be making it wait). "
+                         "Its answer comes in your bot; see also History in a few minutes.")
     store.delete(f"request:{rid}")
     raise SystemExit("Phoenix did not answer in time. Is it running? (Server → Restart Phoenix)")
+
+
+def export_state(store: Store) -> dict:
+    return {"settings": store.settings(), **{k: store.get(k) for k in STATE_KEYS if store.get(k) is not None}}
+
+
+def import_state(store: Store, data: dict) -> list[str]:
+    """Take over the choices exported from another server. Returns what was taken over."""
+    settings = {name: int(data.get("settings", {}).get(name, store.setting(name))) for name in DEFAULT_SETTINGS}
+    error = settings_error(settings)
+    if error:
+        raise SystemExit(f"the timers from the old server don't fit: {error}")
+    for name, value in settings.items():
+        store.set_setting(name, value)
+    done = ["timers"]
+    duress_saved = data.get("duress")
+    if isinstance(duress_saved, dict) and {"salt", "hash"} <= duress_saved.keys():
+        store.set("duress", {"salt": str(duress_saved["salt"]), "hash": str(duress_saved["hash"])})
+        done.append("duress code")
+    if 60 <= int(data.get("duress_delay") or 0) <= duress.MAX_DELAY:
+        store.set("duress_delay", int(data["duress_delay"]))
+    if isinstance(data.get("activity"), bool):
+        store.set("activity", data["activity"])
+    if data.get("paid_until"):
+        store.set("paid_until", date.fromisoformat(data["paid_until"]).isoformat())
+        done.append("paid-until date")
+    pause = data.get("pause_until")
+    if pause and time.time() < float(pause) <= time.time() + MAX_PAUSE:
+        store.set("pause_until", float(pause))
+        done.append("pause")
+    store.log("settings", f"taken over from the old server: {', '.join(done)}")
+    return done
 
 
 def main() -> None:
@@ -89,7 +126,7 @@ def main() -> None:
                             "miss your check-ins and deliver by mistake.")
         print(json.dumps(summary(store, packages, problems)))
     elif cmd == "log":
-        print(events_text(store, 50, reveal=True))
+        print(events_text(store, 50, reveal=True, tz=cfg.tz))
     elif cmd == "settings":
         print(json.dumps({
             "settings": {name: {"value": value, "help": SETTING_HELP[name]} for name, value in store.settings().items()},
@@ -152,6 +189,10 @@ def main() -> None:
             raise SystemExit(f"Choose between 1 minute and {fmt(duress.MAX_DELAY)}.")
         store.set("duress_delay", seconds)
         print(f"✅ Saved: delivery {fmt(seconds)} after the duress code.")
+    elif cmd == "export-state":
+        print(json.dumps(export_state(store)))
+    elif cmd == "import-state":  # the old server's export comes on stdin
+        print(f"✅ Taken over: {', '.join(import_state(store, json.loads(sys.stdin.read())))}.")
     elif cmd == "request" and len(args) == 1:
         print(request(store, args[0]))
     else:

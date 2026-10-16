@@ -79,14 +79,14 @@ class Run:
     async def _peer(self, key: str, ref: str):
         if self.test:
             return "me", None  # your own Saved Messages
-        user_id = self.store.get_target(key)
+        user_id = self.store.get_target(key, ref)
         if user_id is not None:
             try:
                 return await self.account.input_peer(user_id), user_id
             except (ValueError, TypeError):
                 pass
         user_id, label = await self.account.resolve(ref)
-        self.store.set_target(key, user_id, label)
+        self.store.set_target(key, ref, user_id, label)
         return await self.account.input_peer(user_id), user_id
 
     async def _deliver_to(self, pkg: Package, key: str, ref: str, note: str | None) -> int:

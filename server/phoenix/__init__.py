@@ -3,4 +3,4 @@
 __version__ = "1.1.0"
 
 # Bumped whenever the CLI needs something new from the server; the menu offers an update on mismatch.
-PROTOCOL = 5
+PROTOCOL = 6

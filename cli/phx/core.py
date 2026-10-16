@@ -79,9 +79,13 @@ def load_config() -> dict:
 
 
 def save_config(cfg: dict) -> None:
+    """Written to a private file first and then swapped in: never readable by others, never half-written."""
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    CONFIG_PATH.write_text(json.dumps(cfg, indent=2))
-    CONFIG_PATH.chmod(0o600)
+    part = CONFIG_PATH.with_name(CONFIG_PATH.name + ".part")
+    part.unlink(missing_ok=True)
+    with os.fdopen(os.open(part, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as f:
+        f.write(json.dumps(cfg, indent=2))
+    part.replace(CONFIG_PATH)
 
 
 def require_server(cfg: dict) -> dict:
@@ -267,14 +271,19 @@ def safe_remote_dir(path: str) -> bool:
     return Path(path).is_absolute() and len(parts) >= 3 and "phoenix" in parts[-1].lower() and ".." not in parts
 
 
-def uninstall(cfg: dict) -> None:
-    """Log the server out of Telegram, then delete Phoenix and all its data from the server."""
+def uninstall(cfg: dict) -> str | None:
+    """Log the server out of Telegram, then delete Phoenix and all its data from the server.
+    Returns a warning if the logout didn't work (the session then stays valid at Telegram)."""
     if not safe_remote_dir(cfg["remote_dir"]):
         raise Failed(f"refusing to delete {cfg['remote_dir']!r}: it doesn't look like Phoenix's own folder")
-    ssh(cfg, "docker compose stop && docker compose run --rm -T phoenix python -m phoenix.logout")
+    logout = ssh(cfg, "docker compose stop && docker compose run --rm -T phoenix python -m phoenix.logout")
     r = ssh(cfg, f"docker compose down --rmi all; cd / && rm -rf {shlex.quote(cfg['remote_dir'])}")
     if r.returncode:
         raise Failed("removing Phoenix from the server failed (see the output above)")
+    if logout.returncode:
+        return ("The server could not log out of your Telegram account, so that session still works. End it in "
+                "Telegram → Settings → Devices (the session named after Phoenix's server).")
+    return None
 
 
 # --------------------------------------------------------------------- this copy

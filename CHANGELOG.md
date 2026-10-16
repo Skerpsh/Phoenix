@@ -2,6 +2,24 @@
 
 All notable changes to Phoenix. Versions follow [semantic versioning](https://semver.org); dates are YYYY-MM-DD.
 
+## Unreleased
+
+### Security
+- After you change who receives a package, the Telegram id found for the previous person is never used again. Before, a new recipient that couldn't be found meant the letters still went to the old one.
+- Files decrypted for sending are removed when Phoenix stops (`docker compose stop` included), and anything left over from a crash is removed at start.
+- Removing Phoenix from a server tells you if the server could not log out of your Telegram account, and how to end that session yourself.
+- The settings file on your computer is private from the moment it's written, and the container runs without any special permissions.
+
+### Fixed
+- **Moving to another server** now takes your timers, duress code, pause and paid-until date along. Before, the new server started with the defaults, and the duress code stopped working without a word.
+- **Stop the delivery** really stops: an item stuck for over a minute (a big upload, or Telegram making Phoenix wait) is cut off, and you're told it may still have arrived.
+- Phoenix reconnects to Telegram within a minute when the connection is down at start, instead of up to 6 hours later.
+- A delivery starts before the bio change, so a slow bio update can't hold it up.
+- One database hiccup can no longer stop Phoenix from answering the menu. When an action takes longer than the menu waits, it says so instead of "Is it running?".
+- The history and the payment reminders use your time zone.
+- Phoenix's own messages (time capsules, the rehearsal) are never taken for a sign of life.
+- The secret that hides names on the server is kept in the vault, so a vault restored on a new computer gives the same names, and nothing already delivered is sent twice.
+
 ## 1.1.0 — 2026-10-15
 
 ### Added

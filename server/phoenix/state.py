@@ -1,7 +1,7 @@
 """Read-only views of the switch state (shared by the engine, the bot and the `ctl` command)."""
 
 import time
-from datetime import datetime
+from datetime import datetime, tzinfo
 
 from .db import Store
 from .durations import fmt
@@ -134,10 +134,10 @@ def status_text(s: Store, packages_count: int, *, reveal: bool = False) -> str:
     return "\n".join(lines)
 
 
-def events_text(s: Store, limit: int = 20, *, reveal: bool = False) -> str:
+def events_text(s: Store, limit: int = 20, *, reveal: bool = False, tz: tzinfo | None = None) -> str:
     rows = s.recent_events(limit)
     if silent(s) and not reveal:
         rows = [row for row in rows if row[0] < s.get("silent_since")]
     if not rows:
         return "No events yet."
-    return "\n".join(f"{datetime.fromtimestamp(ts):%Y-%m-%d %H:%M} [{kind}] {text}" for ts, kind, text in rows)
+    return "\n".join(f"{datetime.fromtimestamp(ts, tz):%Y-%m-%d %H:%M} [{kind}] {text}" for ts, kind, text in rows)
