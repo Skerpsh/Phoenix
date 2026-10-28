@@ -41,7 +41,7 @@ COMMANDS = [
 
 HELP = """🔥 Phoenix — dead man's switch
 
-Check in by tapping "✅ I'm OK" or sending any message to this bot. Messages you write anywhere in Telegram count too, but the button is still needed every 30 days. If you stay silent, Phoenix reminds you, escalates to an alarm, and finally delivers each package from your Telegram account to its recipient.
+Check in by tapping "✅ I'm OK" or sending any message to this bot. Messages you write anywhere in Telegram count too, but the button is still needed every {button_every}. If you stay silent, Phoenix reminds you, escalates to an alarm, and finally delivers each package from your Telegram account to its recipient.
 
 /status — current state and time left
 /pause 30d — going offline (trip, hospital), up to 30 days at a time; /resume to end early
@@ -125,7 +125,7 @@ def build_router(engine: Engine, owner_id: int) -> Router:
 
     @r.message(Command("start", "help"))
     async def help_(m: Message):
-        await m.answer(HELP, reply_markup=checkin_keyboard())
+        await m.answer(HELP.format(button_every=fmt(engine.store.setting("button_every"))), reply_markup=checkin_keyboard())
 
     @r.message(Command("checkin"))
     async def checkin(m: Message):

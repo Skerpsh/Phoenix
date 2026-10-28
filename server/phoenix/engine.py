@@ -156,7 +156,8 @@ class Engine:
 
     async def abort(self) -> str | None:
         """Stop a running test, or undo a live trigger (scheduled messages and bio included)."""
-        if self.phase == "triggered":
+        # "done" too: everything was handed to Telegram, but some of it may still be scheduled for later.
+        if self.phase in ("triggered", "done"):
             problems = await self._reset_live()
             self.store.log("abort", "live delivery aborted by owner")
             text = "⏹ Delivery aborted. Scheduled messages were cancelled and Phoenix is armed again."

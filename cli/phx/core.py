@@ -371,6 +371,9 @@ def packages_root(cfg: dict, *, lock_existing: bool = False):
         mounted_here = not os.path.ismount(mp)  # otherwise: another Phoenix window, or left over
         if mounted_here:
             mp.mkdir(mode=0o700, exist_ok=True)
+            # Without XDG_RUNTIME_DIR this is in the shared /tmp: never open the vault where someone else prepared it.
+            if mp.is_symlink() or mp.stat().st_uid != os.getuid():
+                raise Failed(f"{mp} belongs to someone else: remove it, then try again")
             print("🔐 Vault password:")
             if subprocess.run(["gocryptfs", "-q", str(VAULT), str(mp)]).returncode:
                 mp.rmdir()

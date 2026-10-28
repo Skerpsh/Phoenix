@@ -58,7 +58,11 @@ if [ ${#missing[@]} -gt 0 ]; then
 fi
 
 python_ok() { "$1" -c 'import sys; sys.exit(sys.version_info < (3, 11))' 2>/dev/null; }
-if ! python_ok python3 && ! { command -v python3.11 >/dev/null && python_ok python3.11; }; then
+python_found=""
+for py in python3 python3.13 python3.12 python3.11; do  # the same ones cli/phoenix looks for
+    command -v "$py" >/dev/null && python_ok "$py" && python_found=1 && break
+done
+if [ -z "$python_found" ]; then
     die "Phoenix needs Python 3.11 or newer (Ubuntu 22.04: sudo apt install python3.11)."
 fi
 

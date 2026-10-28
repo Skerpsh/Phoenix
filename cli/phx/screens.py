@@ -9,6 +9,7 @@ import shutil
 import subprocess
 from datetime import date, datetime
 from pathlib import Path
+from urllib.parse import unquote
 from zoneinfo import available_timezones
 
 from phoenix import PROTOCOL
@@ -1149,10 +1150,12 @@ class App:
             return
         target = options[idx][1]
         if target is None:
-            paths = [p for p in [Path(x).expanduser() for x in [ui.ask("Folder")] if x] if p.is_dir()]
-            if not paths:
+            raw = ui.ask("Folder")
+            with contextlib.suppress(ValueError):
+                raw = " ".join(shlex.split(raw))  # a folder dragged into the terminal arrives quoted
+            target = Path(unquote(raw.removeprefix("file://"))).expanduser()
+            if not raw or not target.is_dir():
                 raise Failed("that folder doesn't exist")
-            target = paths[0]
         copy = core.backup_vault(target)
         print(f"\n✅ Backed up to {copy}")
         print(f"{BOLD}Remember:{RESET} to open it you need your vault password, or the master key you wrote down.")

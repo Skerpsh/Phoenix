@@ -8,9 +8,14 @@ All notable changes to Phoenix. Versions follow [semantic versioning](https://se
 - After you change who receives a package, the Telegram id found for the previous person is never used again. Before, a new recipient that couldn't be found meant the letters still went to the old one.
 - Files decrypted for sending are removed when Phoenix stops (`docker compose stop` included), and anything left over from a crash is removed at start.
 - Removing Phoenix from a server tells you if the server could not log out of your Telegram account, and how to end that session yourself.
+- The vault never opens in a folder someone else prepared (without `XDG_RUNTIME_DIR` it's mounted in the shared `/tmp`).
 - The settings file on your computer is private from the moment it's written, and the container runs without any special permissions.
 
 ### Fixed
+- `/abort` after everything was handed to Telegram now cancels the messages still scheduled there. Before, it answered "Nothing is being delivered".
+- Backing up the vault to a folder dragged into the terminal works (the path arrives in quotes).
+- `/help` shows your real button interval instead of always "30 days".
+- The installer accepts Python 3.12 and 3.13 even when `python3` is older, like `phoenix` itself does.
 - **Moving to another server** now takes your timers, duress code, pause and paid-until date along. Before, the new server started with the defaults, and the duress code stopped working without a word.
 - **Stop the delivery** really stops: an item stuck for over a minute (a big upload, or Telegram making Phoenix wait) is cut off, and you're told it may still have arrived.
 - Phoenix reconnects to Telegram within a minute when the connection is down at start, instead of up to 6 hours later.

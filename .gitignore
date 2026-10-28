@@ -6,3 +6,4 @@ vault/
 .venv/
 .pytest_cache/
 .ruff_cache/
+graphify-out/

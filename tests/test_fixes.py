@@ -293,3 +293,52 @@ def test_interrupted_move_can_go_back(monkeypatch):
     assert calls == [("restart", "root@old")]
     assert app.cfg["server"] == "root@old" and app.cfg["public_key"] == "age1old"
     assert "moving_state" not in app.cfg
+
+
+# Third audit (28 October 2026).
+def test_abort_after_delivery_cancels_what_is_still_scheduled(server):
+    cfg, _, _ = server
+    deleted = []
+
+    class Account:
+        async def delete_scheduled(self, peer, ids):
+            deleted.append((peer, ids))
+
+    async def notify(text, keyboard=None):
+        pass
+
+    store = Store(cfg.db_path)
+    engine = Engine(cfg, store, Account(), None, notify)
+    store.set("phase", "done")
+    store.mark_delivered("live", "pkg", "item", peer=7, due=time.time() + 30 * D, scheduled=True, msg_ids=[42])
+    text = asyncio.run(engine.abort())
+    assert "aborted" in text and deleted == [(7, [42])] and store.get("phase") == "armed"
+
+
+def test_a_dragged_in_backup_folder_is_found(monkeypatch, tmp_path):
+    from phx import screens, ui
+
+    target = tmp_path / "My Disk"
+    target.mkdir()
+    picked = []
+    monkeypatch.setattr(core, "removable_drives", lambda: [])
+    monkeypatch.setattr(core, "backup_vault", lambda t: picked.append(t) or t)
+    monkeypatch.setattr(ui, "select", lambda *a, **kw: 0)
+    monkeypatch.setattr(ui, "ask", lambda *a, **kw: f"'{target}'")
+    monkeypatch.setattr(ui, "pause", lambda: None)
+    screens.App({}).backup_vault()
+    assert picked == [target]
+
+
+def test_vault_never_opens_in_a_folder_prepared_by_someone_else(monkeypatch, tmp_path):
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (tmp_path / "phoenix-packages").symlink_to(elsewhere)
+    (tmp_path / "vault").mkdir()
+    (tmp_path / "vault" / "gocryptfs.conf").write_text("{}")
+    monkeypatch.setattr(core, "VAULT", tmp_path / "vault")
+    monkeypatch.setattr(core, "mountpoint", lambda: tmp_path / "phoenix-packages")
+    monkeypatch.setattr(core, "need", lambda *tools: None)
+    with pytest.raises(core.Failed, match="someone else"), core.packages_root({}):
+        pass
+
