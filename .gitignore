@@ -7,3 +7,4 @@ vault/
 .pytest_cache/
 .ruff_cache/
 graphify-out/
+.security-audit/
