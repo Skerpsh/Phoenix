@@ -10,6 +10,7 @@ import subprocess
 import tomllib
 from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from phoenix import durations
 
@@ -76,6 +77,24 @@ def parse_on(value, where: str, problems: list[str], default) -> list[str]:
         problems.append(f"{where}: 'on' must be a list with \"silence\" and/or \"panic\"")
         return list(default)
     return on
+
+
+def parse_hours(value) -> list[int]:
+    """"9-21" or [9, 21] → [9, 21]; anything else → [] (any time of day). 22-7 wraps past midnight."""
+    if isinstance(value, str):
+        m = re.fullmatch(r"\s*(\d{1,2})(?::00)?\s*[-–]\s*(\d{1,2})(?::00)?\s*", value)
+        value = [int(m.group(1)), int(m.group(2))] if m else None
+    ok = (isinstance(value, list) and len(value) == 2 and all(isinstance(h, int) and 0 <= h <= 24 for h in value)
+          and value[0] % 24 != value[1] % 24)
+    return [value[0] % 24, value[1] % 24] if ok else []
+
+
+def valid_zone(name: str) -> bool:
+    try:
+        ZoneInfo(name)
+        return True
+    except (ZoneInfoNotFoundError, ValueError):
+        return False
 
 
 def item_schedule(rel: str, problems: list[str], where: str) -> dict:
@@ -164,6 +183,14 @@ def read_package(d: Path) -> tuple[dict, list[dict], list[str]]:
         "on": parse_on(meta.get("on"), where, problems, TRIGGERS),
         "delay": parse_duration(meta.get("delay"), where, problems),
     }
+    if meta.get("hours"):
+        manifest["hours"] = parse_hours(meta["hours"])
+        if not manifest["hours"]:
+            problems.append(f"{where}: delivery hours must look like 9-21")
+    if meta.get("timezone"):
+        manifest["timezone"] = str(meta["timezone"])
+        if not valid_zone(manifest["timezone"]):
+            problems.append(f"{where}: unknown time zone {manifest['timezone']!r} (Recipients → them → Settings)")
     if meta.get("backup"):
         manifest["backup"] = str(meta["backup"]).strip()
         manifest["backup_after"] = parse_duration(meta.get("backup_after", "7d"), where, problems)
@@ -289,7 +316,14 @@ def load_meta(d: Path) -> dict:
         "backup": "" if backup == "@someone_else" else backup,
         "backup_after": to_seconds(meta.get("backup_after"), 7 * D),
         "backup_note": str(meta.get("backup_note", "")).strip(),
+        "hours": parse_hours(meta.get("hours")),
+        "timezone": str(meta.get("timezone", "")).strip(),
     }
+
+
+def hours_label(meta: dict) -> str:
+    h = meta.get("hours")
+    return f"only {h[0]:02}:00–{h[1]:02}:00 {meta.get('timezone') or 'your'} time" if h else ""
 
 
 def save_meta(d: Path, meta: dict) -> None:
@@ -302,6 +336,8 @@ def save_meta(d: Path, meta: dict) -> None:
         "backup": meta["backup"],
         "backup_after": dur_str(meta["backup_after"]) if meta["backup"] else "",
         "backup_note": meta["backup_note"] if meta["backup"] else "",
+        "hours": meta.get("hours") or "",
+        "timezone": meta.get("timezone", "") if meta.get("hours") else "",
     }
     lines += [f"{k} = {json.dumps(v, ensure_ascii=False)}" for k, v in values.items() if v]
     (d / RECIPIENT_FILE).write_text("\n".join(lines) + "\n")
@@ -480,6 +516,8 @@ def push_from(cfg: dict, packages_dir: Path) -> None:
         later = sum(1 for i in items if "after" in i or "date" in i)
         if later:
             extras.append(f"{later} scheduled later")
+        if manifest.get("hours"):
+            extras.append(hours_label(manifest))
         if manifest.get("backup"):
             extras.append(f"backup {manifest['backup']}")
         print(f"✔ {manifest['name']} → {manifest['telegram']}: {len(entries)} item(s), {human(total)}"

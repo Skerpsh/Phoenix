@@ -210,3 +210,46 @@ def test_vault_backup(tmp_path, monkeypatch):
     copy = core.backup_vault(usb)
     assert (copy / "vault" / "abc" / "encrypted").read_bytes() == b"\x00" * 100
     assert "master key" in (copy / "HOW-TO-RESTORE.txt").read_text()
+
+
+# ------------------------------------------------------------------- delivery hours
+def test_delivery_hours_move_items_into_the_recipients_day(server, tmp_path):
+    from zoneinfo import ZoneInfo
+
+    from phoenix.packages import Item, Package, _hours, in_hours, load_all
+
+    ny, kyiv = ZoneInfo("America/New_York"), ZoneInfo("Europe/Kyiv")
+    at = lambda *a, tz=ny: datetime(*a, tzinfo=tz).timestamp()  # noqa: E731
+    assert in_hours(at(2030, 1, 10, 3), ny, (9, 21)) == at(2030, 1, 10, 9), "night → this morning"
+    assert in_hours(at(2030, 1, 10, 22), ny, (9, 21)) == at(2030, 1, 11, 9), "late evening → next morning"
+    assert in_hours(at(2030, 1, 10, 12), ny, (9, 21)) == at(2030, 1, 10, 12), "inside: unchanged"
+    assert in_hours(at(2030, 1, 10, 1), ny, (22, 2)) == at(2030, 1, 10, 1), "a window past midnight"
+    assert in_hours(at(2030, 1, 10, 12), ny, (22, 2)) == at(2030, 1, 10, 22)
+    assert in_hours(at(2030, 3, 9, 23), ny, (9, 21)) == at(2030, 3, 10, 9), "across the DST change"
+
+    text = Item(id="t", kind="text", name="t", size=1)
+    dated = Item(id="d", kind="text", name="d", size=1, date="2030-01-10T07:00")
+    p = Package(hid="h", name="Bro", telegram="@bro", items=[text, dated], hours=(9, 21), timezone="America/New_York")
+    trigger = at(2030, 1, 10, 3)  # 10:00 in Kyiv, 03:00 in New York
+    assert p.due(text, trigger, kyiv) == at(2030, 1, 10, 9), "his morning, not yours"
+    assert p.due(dated, trigger, kyiv) == at(2030, 1, 10, 7), "a date is kept, in his zone"
+    assert p.due(text, at(2030, 1, 9, 12), kyiv, now=trigger) == at(2030, 1, 10, 9), "overdue item waits for morning"
+    assert Package(hid="h", name="x", telegram="@x", items=[text]).due(text, trigger, kyiv) == trigger
+
+    assert _hours([9, 21]) == (9, 21)
+    assert _hours([99, 5]) is _hours("9-21") is _hours([True, 5]) is _hours([7, 7]) is None, "bad data → any time"
+
+    # From the menu's settings to the server.
+    assert pk.parse_hours("9-21") == [9, 21] and pk.parse_hours("22:00 – 7") == [22, 7]
+    assert pk.parse_hours("9-9") == pk.parse_hours("25-3") == pk.parse_hours("soon") == []
+    cfg, public_key, data = server
+    root = tmp_path / "packages"
+    write_meta(root / "bro", name="Bro", telegram="@bro", hours=[9, 21], timezone="America/New_York")
+    (root / "bro" / "01.txt").write_text("hi")
+    assert pk.load_meta(root / "bro")["hours"] == [9, 21]
+    push_locally(root, public_key, data)
+    loaded = load_all(cfg.packages_dir, Crypto(cfg.identity_path))
+    assert (loaded.packages[0].hours, loaded.packages[0].timezone) == ((9, 21), "America/New_York")
+
+    write_meta(root / "bro", name="Bro", telegram="@bro", hours=[9, 21], timezone="Mars/Olympus")
+    assert any("unknown time zone" in p for p in pk.read_package(root / "bro")[2])

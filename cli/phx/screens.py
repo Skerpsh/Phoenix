@@ -126,8 +126,9 @@ def timeline(root: Path, kind: str) -> list[tuple[float, str, str]]:
                 offset = manifest["delay"] + item.get("after", 0)
                 key = (offset, offset_label(offset))
             groups.setdefault(key, []).append(item["kind"])
+        hours = f" ({pk.hours_label(manifest)})" if manifest.get("hours") else ""
         for (offset, label), kinds in groups.items():
-            rows.append((offset, label, f"{name}: {describe_kinds(kinds)}"))
+            rows.append((offset, label, f"{name}: {describe_kinds(kinds)}{hours}"))
         if manifest.get("backup") and items:
             first = min((manifest["delay"] + i.get("after", 0) for i in items if "date" not in i), default=0)
             offset = first + manifest["backup_after"]
@@ -669,7 +670,7 @@ class App:
             ("📎 Add files: photos, videos, voice messages, documents", self.add_files),
             ("📝 Edit a message", self.edit_message),
             ("🗑 Remove something from the list", self.remove_item),
-            ("⚙️ Settings: name, Telegram, when to send, backup person", self.recipient_settings),
+            ("⚙️ Settings: name, Telegram, when to send, hours, backup person", self.recipient_settings),
             ("📂 Open their folder", lambda d: open_folder(d)),
             ("❌ Delete this recipient", self.delete_recipient),
         ]
@@ -678,6 +679,8 @@ class App:
             lines = [f"{BOLD}👤 {meta['name']}{RESET} → {meta['telegram'] or '(Telegram not set)'}",
                      f"Sent {ON_LABELS[tuple(meta['on'])]}"
                      + (f", {pk.dur_str(meta['delay'])} after the trigger" if meta["delay"] else "")]
+            if meta["hours"]:
+                lines.append(f"Arrives {pk.hours_label(meta)}")
             if meta["backup"]:
                 lines.append(f"Backup person: {meta['backup']}, if it isn't read within {pk.dur_str(meta['backup_after'])}")
             lines += ["", "What they receive, in this order:"]
@@ -766,6 +769,17 @@ class App:
         meta["telegram"] = ui.ask_telegram(TELEGRAM_QUESTION, meta["telegram"])
         meta["on"] = ui.ask_on("When should this be sent?", meta["on"])
         meta["delay"] = ui.ask_duration("Wait after the trigger before sending? (e.g. 3d, 2w; Enter = no wait)", meta["delay"])
+        ui.explain("\nDelivery hours: so nothing arrives in the middle of their night. Outside these hours, "
+                   "messages wait until the hours start, in their time zone.")
+        while True:
+            raw = ui.ask("Hours when messages may arrive, their time (e.g. 9-21; Enter = any time)",
+                         f"{meta['hours'][0]}-{meta['hours'][1]}" if meta["hours"] else "", clearable=True)
+            meta["hours"] = pk.parse_hours(raw)
+            if meta["hours"] or not raw:
+                break
+            print("  Two hours from 0 to 23 with a dash: 9-21, or 22-7 for a night owl.")
+        if meta["hours"]:
+            meta["timezone"] = self.ask_time_zone(meta["timezone"] or self.own_time_zone())
         ui.explain("\nBackup person: if they don't read it in time (or can't be found), the same goes to someone else.")
         meta["backup"] = ui.ask_telegram("Backup person's Telegram (Enter = nobody)", meta["backup"], optional=True)
         if meta["backup"]:
@@ -998,6 +1012,12 @@ class App:
                 pick = ui.select("Which one?", matches, back="Search again")
                 if pick is not None:
                     return matches[pick]
+
+    def own_time_zone(self) -> str:
+        try:
+            return core.read_env(self.cfg).get("TIMEZONE") or local_timezone()
+        except core.Failed:  # server unreachable: settings still work offline
+            return local_timezone()
 
     def time_zone(self) -> None:
         current = core.read_env(self.cfg).get("TIMEZONE") or "Europe/Kyiv"

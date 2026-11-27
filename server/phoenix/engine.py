@@ -196,6 +196,8 @@ class Engine:
             if p.delay or later:
                 lines.append(f"    starts {fmt(p.delay) + ' after trigger' if p.delay else 'at trigger'}"
                              f"{f', {later} item(s) scheduled later' if later else ''}")
+            if p.hours:
+                lines.append(f"    arrives {p.hours_label}")
             latest = p.latest_offset(now, tz)
             if latest > HORIZON:
                 lines.append(f"    ⚠️ the last item is {fmt(latest)} after trigger: the server must stay alive "
@@ -555,7 +557,7 @@ class Engine:
             if not p.backup or s.get(f"backup:{p.hid}") is not None:
                 continue
             start = p.start(trigger_ts)
-            first_due = min((i.due(start, self.cfg.tz) for i in p.items), default=start)
+            first_due = min((p.due(i, start, self.cfg.tz) for i in p.items), default=start)
             if now < first_due + p.backup_after:
                 continue
             read = False

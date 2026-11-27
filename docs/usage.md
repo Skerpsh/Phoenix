@@ -70,7 +70,7 @@ Choose a person to see what they'll receive, in order, and what you can do:
 | 📎 **Add files** | **Drag** files or folders from your file manager into the terminal window (this pastes their paths), then press Enter. |
 | 📝 **Edit a message** | Opens it in a text editor (`nano` by default: save with Ctrl+O, Enter; exit with Ctrl+X). |
 | 🗑 **Remove something** | Removes one item from the list. |
-| ⚙️ **Settings** | Name, Telegram, when to send, delay, backup person (see below). |
+| ⚙️ **Settings** | Name, Telegram, when to send, delay, delivery hours, backup person (see below). |
 | 📂 **Open their folder** | Opens the folder in your file manager. You can add or rename files there too. |
 | ❌ **Delete this recipient** | Deletes the person and everything prepared for them. |
 
@@ -102,6 +102,7 @@ Items are sent in the order shown in the list.
 |---|---|
 | **When should this be sent?** | If you stop checking in, or on the panic button, or both (the default). For example: a "what to do right now" note on panic, and everything else on silence. |
 | **Wait after the trigger** | Hold the whole package back for a while, e.g. `3d`. |
+| **Delivery hours** | So nothing arrives in the middle of their night, e.g. `9-21` in their time zone (`22-7` works too). Anything due outside these hours waits until they start, handed to Telegram's scheduled messages. Letters set for a date keep their exact time, in their time zone. Enter = any time. |
 | **Backup person** | If they haven't read the package within the time you choose (default 7 days), or can't be found at all, the same package goes to the backup person. It starts with a short note explaining why; you can write your own note. |
 
 ### The letter guide

@@ -10,8 +10,9 @@ Layout on the server (all names are hashes, nothing readable on disk):
 import hashlib
 import json
 from dataclasses import dataclass, field
-from datetime import datetime, tzinfo
+from datetime import datetime, time, timedelta, tzinfo
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .crypto import Crypto
 from .durations import fmt
@@ -20,6 +21,18 @@ TRIGGERS = ("silence", "panic")
 ACCOUNT_FILE = "_account.json.age"
 CAPSULES_DIR = "_capsules"
 DEFAULT_BACKUP_AFTER = 7 * 86400
+
+
+def in_hours(ts: float, tz: tzinfo, hours: tuple[int, int]) -> float:
+    """`ts`, or the next start of the daily window [from, to) in `tz` if `ts` falls outside it.
+    The window may wrap past midnight (22-2)."""
+    start, end = hours
+    local = datetime.fromtimestamp(ts, tz)
+    inside = start <= local.hour < end if start < end else (local.hour >= start or local.hour < end)
+    if inside:
+        return ts
+    day = local.date() if local.hour < start else local.date() + timedelta(days=1)
+    return datetime.combine(day, time(start), tzinfo=tz).timestamp()
 
 
 @dataclass
@@ -57,6 +70,8 @@ class Package:
     backup_after: int = DEFAULT_BACKUP_AFTER
     backup_note: str | None = None
     capsule_date: str | None = None  # a time capsule: sent on this local date-time, trigger or not
+    hours: tuple[int, int] | None = None  # only deliver between these hours of the recipient's day
+    timezone: str | None = None  # the recipient's time zone (default: yours)
 
     @property
     def size(self) -> int:
@@ -69,12 +84,33 @@ class Package:
     def start(self, trigger_ts: float) -> float:
         return trigger_ts + self.delay
 
+    def zone(self, tz: tzinfo) -> tzinfo:
+        try:
+            return ZoneInfo(self.timezone) if self.timezone else tz
+        except (ZoneInfoNotFoundError, ValueError):
+            return tz
+
+    def due(self, item: Item, start: float, tz: tzinfo, now: float | None = None) -> float:
+        """When `item` goes out: dates in the recipient's zone, the rest moved into their waking hours.
+        `now` keeps a resumed delivery from sending an overdue item at night."""
+        tz = self.zone(tz)
+        due = item.due(start, tz)
+        if item.date or not self.hours:
+            return due
+        return in_hours(max(due, now or due), tz, self.hours)
+
+    @property
+    def hours_label(self) -> str:
+        if not self.hours:
+            return ""
+        return f"only {self.hours[0]:02}:00–{self.hours[1]:02}:00 {self.timezone or 'your'} time"
+
     def capsule_due(self, tz: tzinfo) -> float:
         return datetime.fromisoformat(self.capsule_date).replace(tzinfo=tz).timestamp()
 
     def latest_offset(self, now: float, tz: tzinfo) -> float:
         """How far after a trigger right now the last item would be sent (in seconds)."""
-        return max((i.due(self.start(now), tz) - now for i in self.items), default=0)
+        return max((self.due(i, self.start(now), tz) - now for i in self.items), default=0)
 
 
 @dataclass
@@ -103,6 +139,13 @@ def package_dirs(packages_dir: Path) -> list[Path]:
     return sorted(p for p in packages_dir.iterdir() if p.is_dir() and not p.name.startswith("_"))
 
 
+def _hours(value) -> tuple[int, int] | None:
+    """Delivery hours from a manifest; anything malformed means any time, never a package that can't go out."""
+    ok = (isinstance(value, list) and len(value) == 2 and all(type(h) is int and 0 <= h <= 23 for h in value)
+          and value[0] != value[1])
+    return (value[0], value[1]) if ok else None
+
+
 def _load_package(d: Path, crypto: Crypto) -> Package:
     m = json.loads(crypto.decrypt_bytes(d / "manifest.json.age"))
     items = [
@@ -120,6 +163,7 @@ def _load_package(d: Path, crypto: Crypto) -> Package:
         on=tuple(m.get("on", TRIGGERS)), delay=m.get("delay", 0),
         backup=m.get("backup"), backup_after=m.get("backup_after", DEFAULT_BACKUP_AFTER),
         backup_note=m.get("backup_note"), capsule_date=m.get("capsule_date"),
+        hours=_hours(m.get("hours")), timezone=m.get("timezone") if isinstance(m.get("timezone"), str) else None,
     )
 
 

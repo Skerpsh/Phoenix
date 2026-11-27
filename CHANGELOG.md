@@ -4,6 +4,9 @@ All notable changes to Phoenix. Versions follow [semantic versioning](https://se
 
 ## Unreleased
 
+### Added
+- **Delivery hours** for each person (Recipients → them → Settings): messages arrive only between the hours you choose, in their time zone, never in the middle of their night. Letters set for a date use their time zone too.
+
 ### Security
 - After you change who receives a package, the Telegram id found for the previous person is never used again. Before, a new recipient that couldn't be found meant the letters still went to the old one.
 - Files decrypted for sending are removed when Phoenix stops (`docker compose stop` included), and anything left over from a crash is removed at start.

@@ -109,7 +109,8 @@ class Run:
         for item in pending:
             if self.stop():
                 raise Stopped
-            due = item.due(start, self.tz)
+            # shortcut: a backup person gets the main recipient's hours and zone; give them their own if asked
+            due = pkg.due(item, start, self.tz, now)
             schedule = None
             if self.test:
                 when = item.when(pkg.delay)
@@ -162,6 +163,8 @@ class Run:
         ]
         if pkg.delay:
             lines.append(f"Starts {fmt(pkg.delay)} after the trigger")
+        if pkg.hours:
+            lines.append(f"Arrives {pkg.hours_label}")
         if pkg.backup:
             lines.append(f"Backup: {pkg.backup}, if this is not read within {fmt(pkg.backup_after)}")
         lines.append("Everything below is exactly what they will receive.")

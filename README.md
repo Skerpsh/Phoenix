@@ -66,6 +66,7 @@ Every interval can be changed. → [How it works in detail](docs/how-it-works.md
 - 📨 **Sent from your own account:** text, files in original quality, voice messages and round video messages.
 - 🧑‍🤝‍🧑 **Different content for each person,** and nobody needs to know in advance.
 - ⏰ **Delayed and dated letters:** "a year later", "on her birthday in 2034". Anything due within a year is handed to Telegram's own scheduled messages, so it arrives even if the server is gone by then.
+- 🌙 **Delivery hours:** nothing arrives in the middle of someone's night; each person can have their own time zone.
 - 🔁 **Backup person:** if someone doesn't read their package in time, or can't be found, it goes to someone else.
 - 🚨 **Two triggers:** silence, and a panic button. Each package chooses which one sends it.
 - 🤫 **Duress code:** a phrase that looks like an ordinary check-in, but quietly starts the panic delivery while the bot keeps showing a normal status.
@@ -148,7 +149,7 @@ The first run walks you through setup, one step at a time. You can stop at any p
 
 In the menu:
 
-1. **📦 Recipients** → add a person → write messages and add files.
+1. **📦 Recipients** → add a person → write messages and add files. In their **⚙️ Settings** you can also choose a backup person and the hours when messages may arrive in their time zone.
 2. **⬆️ Upload**.
 3. **🧪 Rehearsal**.
 
