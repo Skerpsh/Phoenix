@@ -2,7 +2,7 @@
 
 All notable changes to Phoenix. Versions follow [semantic versioning](https://semver.org); dates are YYYY-MM-DD.
 
-## Unreleased
+## 1.2.0 — 2026-11-27
 
 ### Added
 - **Delivery hours** for each person (Recipients → them → Settings): messages arrive only between the hours you choose, in their time zone, never in the middle of their night. Letters set for a date use their time zone too.
